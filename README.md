@@ -4,9 +4,17 @@ A lightweight macOS media manager for photographers working directly on storage 
 
 Its standout feature is **RAW/JPG paired deletion by filename**: delete one file and matching companions are removed together. Deletions go to the macOS Trash by default (⌘Z undo), or you can **delete permanently** (skip Trash, irreversible).
 
-**Languages:** English (default) and Simplified Chinese — follows your macOS system language automatically.
+**Languages:** English (default) and Simplified Chinese — follows your macOS system language by default, or pick a specific language in **Settings → Language**.
 
 [中文文档](README.zh-Hans.md)
+
+---
+
+## Screenshots
+
+| Non-destructive editor | RAW/JPG paired deletion |
+| --- | --- |
+| ![Editor](docs/screenshots/editor.png) | ![Paired deletion](docs/screenshots/delete-pairing.png) |
 
 ---
 

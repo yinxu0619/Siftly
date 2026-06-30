@@ -114,12 +114,28 @@ public final class AppState: ObservableObject {
         }
     }
 
+    private static let languageKey = "siftly.languageOverride"
+    /// Selected interface language: `nil` (or "system") follows the OS; otherwise
+    /// a locale identifier like "en" or "zh-Hans".
+    @Published public var languageOverride: String? {
+        didSet {
+            UserDefaults.standard.set(languageOverride, forKey: Self.languageKey)
+            L10n.overrideLocaleIdentifier = languageOverride
+        }
+    }
+
+    /// Locales the UI offers an explicit choice for (besides "follow system").
+    public static let supportedLanguages: [String] = ["en", "zh-Hans"]
+
     /// Pixel size used for the full-size preview (and its prefetch cache).
     public static let previewPixelSize = CGSize(width: 2600, height: 2600)
 
     public init() {
         let storedPrefetch = UserDefaults.standard.object(forKey: Self.prefetchKey) as? Int
         self.previewPrefetchCount = storedPrefetch ?? 3
+        let storedLanguage = UserDefaults.standard.string(forKey: Self.languageKey)
+        self.languageOverride = storedLanguage
+        L10n.overrideLocaleIdentifier = storedLanguage
 
         #if os(macOS)
         self.volumeService = MacVolumeService()

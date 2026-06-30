@@ -59,5 +59,9 @@ public struct ContentView: View {
         } message: {
             Text(app.errorMessage ?? "")
         }
+        // Re-render the whole UI (and drive SwiftUI-native formatting) when the
+        // user picks an explicit interface language.
+        .environment(\.locale, app.languageOverride.map(Locale.init(identifier:)) ?? .autoupdatingCurrent)
+        .id(app.languageOverride ?? "system")
     }
 }

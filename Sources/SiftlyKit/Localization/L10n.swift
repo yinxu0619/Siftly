@@ -3,10 +3,84 @@ import Foundation
 /// Centralized user-facing strings. English is the development language; translations
 /// live in `Resources/Localizable.xcstrings` (zh-Hans today, more locales later).
 enum L10n {
+    /// When non-nil, forces a specific locale (e.g. "en", "zh-Hans") regardless of
+    /// the system language. `nil` = follow the system. Set by `AppState`.
+    nonisolated(unsafe) static var overrideLocaleIdentifier: String?
+
+    private static let sourceLanguage = "en"
+
+    /// Parsed `Localizable.xcstrings`: key → (locale → value). Loaded lazily so the
+    /// runtime language override works in both debug (SPM) and release (.app)
+    /// builds, including selecting English on a non-English system.
+    nonisolated(unsafe) private static let catalog: [String: [String: String]] = {
+        guard let url = Bundle.module.url(forResource: "Localizable", withExtension: "xcstrings"),
+              let data = try? Data(contentsOf: url),
+              let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let strings = root["strings"] as? [String: Any] else {
+            return [:]
+        }
+        var result: [String: [String: String]] = [:]
+        for (key, raw) in strings {
+            guard let entry = raw as? [String: Any] else { continue }
+            var perLocale: [String: String] = [:]
+            if let locs = entry["localizations"] as? [String: Any] {
+                for (locale, lraw) in locs {
+                    if let unit = (lraw as? [String: Any])?["stringUnit"] as? [String: Any],
+                       let value = unit["value"] as? String {
+                        perLocale[locale] = value
+                    }
+                }
+            }
+            result[key] = perLocale
+        }
+        return result
+    }()
+
+    /// The effective locale used for number/format substitution.
+    static var locale: Locale {
+        overrideLocaleIdentifier.map { Locale(identifier: $0) } ?? .current
+    }
+
     private static func tr(_ key: String, _ args: CVarArg...) -> String {
-        let format = String(localized: String.LocalizationValue(key), bundle: .module)
+        let format = resolve(key)
         guard !args.isEmpty else { return format }
-        return String(format: format, locale: Locale.current, arguments: args)
+        return String(format: format, locale: locale, arguments: args)
+    }
+
+    /// Cached per-locale `.lproj` bundles (present in release/.app builds where the
+    /// String Catalog has been compiled into `<locale>.lproj/Localizable.strings`).
+    nonisolated(unsafe) private static var lprojBundles: [String: Bundle?] = [:]
+
+    private static func lprojValue(_ locale: String, _ key: String) -> String? {
+        let bundle: Bundle?
+        if let cached = lprojBundles[locale] {
+            bundle = cached
+        } else {
+            let path = Bundle.module.path(forResource: locale, ofType: "lproj")
+            bundle = path.flatMap(Bundle.init(path:))
+            lprojBundles[locale] = bundle
+        }
+        guard let bundle else { return nil }
+        let sentinel = "\u{0}__missing__"
+        let value = bundle.localizedString(forKey: key, value: sentinel, table: nil)
+        return value == sentinel ? nil : value
+    }
+
+    private static func resolve(_ key: String) -> String {
+        guard let id = overrideLocaleIdentifier else {
+            // Follow the system via the standard catalog lookup.
+            return String(localized: String.LocalizationValue(key), bundle: .module)
+        }
+        // For the source language the key itself is the English text; there is no
+        // `en.lproj`, so prefer the catalog (debug) and fall back to the key.
+        if id == sourceLanguage {
+            return catalog[key]?[sourceLanguage] ?? key
+        }
+        // Try the compiled .lproj (release) first, then the catalog (debug).
+        return lprojValue(id, key)
+            ?? catalog[key]?[id]
+            ?? catalog[key]?[sourceLanguage]
+            ?? key
     }
 
     // MARK: - App / menus
@@ -249,6 +323,12 @@ enum L10n {
     }
     static func prefetchHintOn(_ total: Int, _ mb: Int) -> String {
         tr("About %lld photos prefetched (~%lld MB, auto-evicted when full).", total, mb)
+    }
+    static var languageSection: String { tr("Language") }
+    static var language: String { tr("Interface language") }
+    static var languageSystem: String { tr("Follow system") }
+    static var languageRestartHint: String {
+        tr("Menus update after restarting the app.")
     }
 
     // MARK: - About

@@ -7,6 +7,20 @@ struct SettingsView: View {
     var body: some View {
         Form {
             Section {
+                Picker(L10n.language, selection: languageBinding) {
+                    Text(L10n.languageSystem).tag("system")
+                    ForEach(AppState.supportedLanguages, id: \.self) { code in
+                        Text(Self.languageName(code)).tag(code)
+                    }
+                }
+                Text(L10n.languageRestartHint)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } header: {
+                Text(L10n.languageSection)
+            }
+
+            Section {
                 Stepper(value: $app.previewPrefetchCount, in: 0...20) {
                     HStack {
                         Text(L10n.prefetchNeighbors)
@@ -30,7 +44,21 @@ struct SettingsView: View {
             }
         }
         .formStyle(.grouped)
-        .frame(width: 440, height: 240)
+        .frame(width: 460, height: 320)
+    }
+
+    private var languageBinding: Binding<String> {
+        Binding(
+            get: { app.languageOverride ?? "system" },
+            set: { app.languageOverride = ($0 == "system") ? nil : $0 }
+        )
+    }
+
+    /// Native display name for a locale code (e.g. "English", "简体中文").
+    private static func languageName(_ code: String) -> String {
+        let locale = Locale(identifier: code)
+        return locale.localizedString(forIdentifier: code)?.capitalized
+            ?? code
     }
 
     private var prefetchHint: String {
