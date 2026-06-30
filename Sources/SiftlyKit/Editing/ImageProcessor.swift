@@ -8,6 +8,9 @@ import UniformTypeIdentifiers
 #if canImport(AppKit)
 import AppKit
 #endif
+#if canImport(Vision)
+import Vision
+#endif
 
 public enum ImageProcessingError: Error {
     case cannotLoadSource
@@ -96,6 +99,115 @@ public final class ImageProcessor: @unchecked Sendable {
         return f.outputImage ?? image
     }
 
+    // MARK: - Geometry (rotate / straighten / flip / crop)
+
+    /// Applies geometric edits in order: 90° rotation → horizontal flip →
+    /// straighten (with auto-inscribe to drop empty corners) → user crop.
+    static func applyGeometry(_ image: CIImage, _ adj: ImageAdjustments, includeCrop: Bool) -> CIImage {
+        var img = image
+
+        let quarters = ((adj.rotationQuarters % 4) + 4) % 4
+        if quarters != 0 {
+            img = img.transformed(by: CGAffineTransform(rotationAngle: -CGFloat(quarters) * .pi / 2))
+            img = normalizeOrigin(img)
+        }
+
+        if adj.flipHorizontal {
+            img = img.transformed(by: CGAffineTransform(scaleX: -1, y: 1))
+            img = normalizeOrigin(img)
+        }
+
+        if adj.straighten != 0 {
+            let radians = CGFloat(adj.straighten) * .pi / 180
+            let before = img.extent
+            let center = CGPoint(x: before.midX, y: before.midY)
+            var t = CGAffineTransform(translationX: center.x, y: center.y)
+            t = t.rotated(by: radians)
+            t = t.translatedBy(x: -center.x, y: -center.y)
+            img = img.transformed(by: t)
+            // Auto-inscribe a centered rect to remove the empty rotated corners.
+            let inset = largestInscribedRect(width: before.width, height: before.height, angle: Double(radians))
+            let rect = CGRect(
+                x: img.extent.midX - inset.width / 2,
+                y: img.extent.midY - inset.height / 2,
+                width: inset.width,
+                height: inset.height
+            )
+            img = normalizeOrigin(img.cropped(to: rect))
+        }
+
+        if includeCrop, let crop = adj.cropRect,
+           crop != CGRect(x: 0, y: 0, width: 1, height: 1) {
+            let e = img.extent
+            let rect = CGRect(
+                x: e.minX + crop.minX * e.width,
+                y: e.minY + (1 - crop.maxY) * e.height, // top-left → bottom-left origin
+                width: crop.width * e.width,
+                height: crop.height * e.height
+            ).integral
+            img = normalizeOrigin(img.cropped(to: rect))
+        }
+
+        return img
+    }
+
+    private static func normalizeOrigin(_ image: CIImage) -> CIImage {
+        image.transformed(by: CGAffineTransform(translationX: -image.extent.minX, y: -image.extent.minY))
+    }
+
+    /// Largest axis-aligned rectangle that fits inside a `w`×`h` rectangle
+    /// rotated by `angle` (radians). Used to auto-crop after straightening.
+    private static func largestInscribedRect(width w: CGFloat, height h: CGFloat, angle: Double) -> CGSize {
+        guard w > 0, h > 0 else { return CGSize(width: max(w, 1), height: max(h, 1)) }
+        let sinA = abs(sin(angle)), cosA = abs(cos(angle))
+        let widthIsLonger = w >= h
+        let sideLong = max(w, h), sideShort = min(w, h)
+        var wr: CGFloat
+        var hr: CGFloat
+        if Double(sideShort) <= 2 * sinA * cosA * Double(sideLong) || abs(sinA - cosA) < 1e-10 {
+            let x = 0.5 * sideShort
+            if widthIsLonger {
+                wr = sinA < 1e-9 ? sideLong : CGFloat(Double(x) / sinA)
+                hr = cosA < 1e-9 ? sideShort : CGFloat(Double(x) / cosA)
+            } else {
+                wr = cosA < 1e-9 ? sideShort : CGFloat(Double(x) / cosA)
+                hr = sinA < 1e-9 ? sideLong : CGFloat(Double(x) / sinA)
+            }
+        } else {
+            let cos2 = cosA * cosA - sinA * sinA
+            wr = CGFloat((Double(w) * cosA - Double(h) * sinA) / cos2)
+            hr = CGFloat((Double(h) * cosA - Double(w) * sinA) / cos2)
+        }
+        return CGSize(width: max(1, min(wr, w)), height: max(1, min(hr, h)))
+    }
+
+    /// Detects the horizon and returns the straighten angle (degrees) needed to
+    /// level it, or nil if no confident horizon was found.
+    public func autoStraightenAngle(url: URL) async -> Double? {
+        #if canImport(Vision)
+        return await withCheckedContinuation { (cont: CheckedContinuation<Double?, Never>) in
+            queue.async { [self] in
+                guard let src = loadFullSource(url) else { cont.resume(returning: nil); return }
+                let request = VNDetectHorizonRequest()
+                let handler = VNImageRequestHandler(ciImage: src, options: [:])
+                do {
+                    try handler.perform([request])
+                    if let obs = request.results?.first {
+                        let degrees = Double(obs.angle) * 180 / .pi
+                        cont.resume(returning: max(-45, min(45, -degrees)))
+                    } else {
+                        cont.resume(returning: nil)
+                    }
+                } catch {
+                    cont.resume(returning: nil)
+                }
+            }
+        }
+        #else
+        return nil
+        #endif
+    }
+
     // MARK: - Rendering
 
     /// The pixel size of the developed source (post-orientation), if available.
@@ -109,13 +221,21 @@ public final class ImageProcessor: @unchecked Sendable {
 
     #if canImport(AppKit)
     /// Renders a live preview (downscaled) with the given adjustments.
-    public func renderPreview(url: URL, adjustments: ImageAdjustments, maxDimension: CGFloat) async -> NSImage? {
+    /// - Parameter includeCrop: when false, the user crop is skipped (used by the
+    ///   crop UI, which needs the full straightened image to draw the crop box).
+    public func renderPreview(
+        url: URL,
+        adjustments: ImageAdjustments,
+        maxDimension: CGFloat,
+        includeCrop: Bool = true
+    ) async -> NSImage? {
         await withCheckedContinuation { cont in
             queue.async { [self] in
                 guard let base = base(for: url, maxDimension: maxDimension) else {
                     cont.resume(returning: nil); return
                 }
-                let output = ImagePipeline.apply(adjustments, to: base)
+                let colored = ImagePipeline.apply(adjustments, to: base)
+                let output = Self.applyGeometry(colored, adjustments, includeCrop: includeCrop)
                 guard let cg = context.createCGImage(output, from: output.extent, format: .RGBA8, colorSpace: sRGB) else {
                     cont.resume(returning: nil); return
                 }
@@ -139,7 +259,8 @@ public final class ImageProcessor: @unchecked Sendable {
                 guard let full = loadFullSource(url) else {
                     cont.resume(throwing: ImageProcessingError.cannotLoadSource); return
                 }
-                var output = ImagePipeline.apply(adjustments, to: full)
+                let colored = ImagePipeline.apply(adjustments, to: full)
+                var output = Self.applyGeometry(colored, adjustments, includeCrop: true)
                 if let maxEdge = settings.maxLongEdge {
                     output = Self.scaled(output, maxLongEdge: CGFloat(maxEdge))
                 }

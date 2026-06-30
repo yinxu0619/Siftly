@@ -12,11 +12,19 @@ struct PreviewView: View {
     @State private var image: NSImage?
     @State private var showDeleteConfirm = false
 
+    // EXIF overlay (persisted toggle, can be turned off).
+    @AppStorage("siftly.preview.showEXIF") private var showEXIF = true
+    @State private var exif: EXIFInfo?
+
     // Zoom / pan state.
     @State private var zoom: CGFloat = 1
     @State private var baseZoom: CGFloat = 1
     @State private var offset: CGSize = .zero
     @State private var baseOffset: CGSize = .zero
+
+    // Scroll-wheel navigation throttling.
+    @State private var scrollAccumulator: CGFloat = 0
+    @State private var lastScrollStep = Date.distantPast
 
     private var index: Int? { app.displayedFiles.firstIndex(where: { $0.url == file.url }) }
     private var positionText: String {
@@ -28,6 +36,8 @@ struct PreviewView: View {
         ZStack {
             Color.black.opacity(0.96).ignoresSafeArea()
 
+            ScrollWheelCatcher { delta in handleScroll(delta) }
+
             imageLayer
 
             navigationArrows
@@ -37,34 +47,44 @@ struct PreviewView: View {
                 Spacer()
                 bottomBar
             }
+
+            if showEXIF {
+                exifOverlay
+            }
         }
         .task(id: file.url) {
             resetZoom()
-            image = app.thumbnails.cachedImage(for: file.url)
-            image = await app.thumbnails.previewImage(
-                for: file.url,
-                pixelSize: CGSize(width: 2600, height: 2600)
-            )
+            let url = file.url
+            image = app.thumbnails.cachedImage(for: url)
+            let loaded = await app.thumbnails.previewImage(for: url, pixelSize: AppState.previewPixelSize)
+            if !Task.isCancelled { image = loaded }
+            app.prefetchAdjacentPreviews(around: url)
+        }
+        .task(id: file.url) {
+            exif = nil
+            let url = file.url
+            let result = await Task.detached(priority: .utility) { EXIFReader.read(from: url) }.value
+            if file.url == url { exif = result }
         }
         .background(closeShortcut)
         .background(keyboardShortcuts)
         .confirmationDialog(
-            "删除「\(file.name)」？",
+            L10n.deleteConfirmTitle(file.name),
             isPresented: $showDeleteConfirm,
             titleVisibility: .visible
         ) {
-            Button("移入废纸篓", role: .destructive) {
+            Button(L10n.moveToTrash, role: .destructive) {
                 Task { await app.performDeletion(app.planDeletion(for: [file.url])) }
             }
-            Button("直接删除（不可恢复）", role: .destructive) {
+            Button(L10n.deletePermanentPreview, role: .destructive) {
                 Task { await app.performDeletion(app.planDeletion(for: [file.url]), permanent: true) }
             }
-            Button("取消", role: .cancel) {}
+            Button(L10n.cancel, role: .cancel) {}
         } message: {
             if app.pairing.isPaired(file.url) {
-                Text("将同时删除其配对文件，可用 ⌘Z 撤销。")
+                Text(L10n.deleteWithPairingUndo)
             } else {
-                Text("可用 ⌘Z 撤销。")
+                Text(L10n.deleteUndoHint)
             }
         }
     }
@@ -121,6 +141,20 @@ struct PreviewView: View {
         if zoom > 1 { resetZoom() } else { zoom = 2; baseZoom = 2 }
     }
 
+    /// Mouse-wheel / two-finger scroll switches photos when not zoomed in.
+    private func handleScroll(_ delta: CGFloat) {
+        guard zoom <= 1, delta != 0 else { return }
+        let now = Date()
+        if now.timeIntervalSince(lastScrollStep) > 0.4 { scrollAccumulator = 0 }
+        scrollAccumulator += delta
+        guard abs(scrollAccumulator) >= 6 else { return }
+        guard now.timeIntervalSince(lastScrollStep) >= 0.12 else { return }
+        let step = scrollAccumulator > 0 ? -1 : 1   // scroll up → previous, down → next
+        scrollAccumulator = 0
+        lastScrollStep = now
+        app.previewStep(step)
+    }
+
     // MARK: - Bars
 
     private var topBar: some View {
@@ -130,7 +164,7 @@ struct PreviewView: View {
                 HStack(spacing: 8) {
                     if file.isRAW { Text("RAW").font(.caption.bold()) }
                     if app.pairing.isPaired(file.url) {
-                        Label("含配对", systemImage: "link").font(.caption)
+                        Label(L10n.hasPairing, systemImage: "link").font(.caption)
                     }
                     if let volume = file.volumeName {
                         Label(volume, systemImage: "sdcard").font(.caption)
@@ -147,7 +181,7 @@ struct PreviewView: View {
             .font(.title)
             .foregroundStyle(.white.opacity(0.85))
             .keyboardShortcut("w", modifiers: [.command])
-            .help("关闭 (Esc)")
+            .help(L10n.closeHelp)
         }
         .foregroundStyle(.white)
         .padding()
@@ -178,7 +212,7 @@ struct PreviewView: View {
                 .frame(width: 48)
             Button(action: zoomIn) { Image(systemName: "plus.magnifyingglass") }
                 .buttonStyle(.plain)
-            Button("适应") { resetZoom() }
+            Button(L10n.fit) { resetZoom() }
                 .buttonStyle(.plain)
                 .disabled(zoom == 1)
 
@@ -187,22 +221,99 @@ struct PreviewView: View {
             Spacer()
 
             Button {
+                withAnimation(.easeInOut(duration: 0.15)) { showEXIF.toggle() }
+            } label: {
+                Image(systemName: showEXIF ? "info.circle.fill" : "info.circle")
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(showEXIF ? Color.accentColor : .white)
+            .help(L10n.togglePhotoInfoHelp)
+
+            Button {
                 app.openEditor(file.url)
             } label: {
-                Label("编辑", systemImage: "slider.horizontal.3")
+                Label(L10n.edit, systemImage: "slider.horizontal.3")
             }
             .keyboardShortcut("e", modifiers: [.command])
 
             Button(role: .destructive) {
                 showDeleteConfirm = true
             } label: {
-                Label("移入废纸篓", systemImage: "trash")
+                Label(L10n.moveToTrash, systemImage: "trash")
             }
-            .keyboardShortcut(.delete, modifiers: [])
+            .help(L10n.moveToTrashDeleteHelp)
         }
         .foregroundStyle(.white)
         .padding()
         .background(LinearGradient(colors: [.clear, .black.opacity(0.6)], startPoint: .top, endPoint: .bottom))
+    }
+
+    // MARK: - EXIF overlay
+
+    private var exifOverlay: some View {
+        VStack {
+            Spacer()
+            HStack {
+                exifCard
+                Spacer()
+            }
+        }
+        .padding(.leading, 20)
+        .padding(.bottom, 86)
+        .allowsHitTesting(false)
+        .transition(.opacity)
+    }
+
+    @ViewBuilder
+    private var exifCard: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 6) {
+                Image(systemName: "camera.aperture")
+                Text(L10n.photoInfo).font(.caption.bold())
+            }
+            .foregroundStyle(.white.opacity(0.7))
+            .padding(.bottom, 2)
+
+            if let exif {
+                if let dim = exif.dimensionDescription { exifRow(L10n.dimensions, dim) }
+                if let model = exif.cameraModel { exifRow(L10n.camera, model) }
+                if let lens = exif.lensModel { exifRow(L10n.lens, lens) }
+                exifExposureRow
+                if let fl = exif.focalLength { exifRow(L10n.focalLength, String(format: "%.0fmm", fl)) }
+                if let date = exif.dateTaken { exifRow(L10n.captured, date) }
+            } else {
+                Text(L10n.loadingExif).font(.caption).foregroundStyle(.white.opacity(0.6))
+            }
+            if let size = file.fileSize {
+                exifRow(L10n.size, ByteCountFormatter.string(fromByteCount: size, countStyle: .file))
+            }
+        }
+        .padding(12)
+        .frame(maxWidth: 280, alignment: .leading)
+        .background(.black.opacity(0.45), in: RoundedRectangle(cornerRadius: 10))
+        .overlay(RoundedRectangle(cornerRadius: 10).stroke(.white.opacity(0.12), lineWidth: 1))
+    }
+
+    @ViewBuilder
+    private var exifExposureRow: some View {
+        if let exif {
+            let parts: [String] = [
+                exif.iso.map { "ISO \($0)" },
+                exif.aperture.map { String(format: "f/%.1f", $0) },
+                exif.shutterSpeed.map { "\($0)s" }
+            ].compactMap { $0 }
+            if !parts.isEmpty {
+                exifRow(L10n.exposure, parts.joined(separator: " · "))
+            }
+        }
+    }
+
+    private func exifRow(_ key: String, _ value: String) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            Text(key).foregroundStyle(.white.opacity(0.55)).frame(width: 36, alignment: .leading)
+            Text(value).foregroundStyle(.white.opacity(0.95)).lineLimit(2)
+        }
+        .font(.caption)
     }
 
     private var navigationArrows: some View {
@@ -231,9 +342,14 @@ struct PreviewView: View {
 
     // MARK: - Hidden keyboard shortcuts
 
+    /// The editor sits on top of the preview; when it's open the preview must not
+    /// also bind the same keys (Esc / Delete / etc.).
+    private var editorOnTop: Bool { app.editorURL != nil }
+
     private var closeShortcut: some View {
         Button("", action: app.closePreview)
             .keyboardShortcut(.cancelAction)
+            .disabled(editorOnTop)
             .opacity(0)
             .frame(width: 0, height: 0)
     }
@@ -249,8 +365,42 @@ struct PreviewView: View {
             Button("", action: zoomIn).keyboardShortcut("=", modifiers: [.command])
             Button("", action: zoomOut).keyboardShortcut("-", modifiers: [.command])
             Button("", action: resetZoom).keyboardShortcut("0", modifiers: [.command])
+            Button("") { showEXIF.toggle() }.keyboardShortcut("i", modifiers: [])
+            // Delete key (Backspace) + fn+Delete both trigger the delete confirm.
+            Button("") { showDeleteConfirm = true }.keyboardShortcut(.delete, modifiers: [])
+            Button("") { showDeleteConfirm = true }.keyboardShortcut(.deleteForward, modifiers: [])
         }
+        .disabled(editorOnTop)
         .opacity(0)
         .frame(width: 0, height: 0)
     }
 }
+
+#if canImport(AppKit)
+/// Transparent NSView that forwards scroll-wheel delta to SwiftUI.
+private struct ScrollWheelCatcher: NSViewRepresentable {
+    var onScroll: (CGFloat) -> Void
+
+    func makeNSView(context: Context) -> NSView {
+        let view = CatcherView()
+        view.onScroll = onScroll
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        (nsView as? CatcherView)?.onScroll = onScroll
+    }
+
+    final class CatcherView: NSView {
+        var onScroll: ((CGFloat) -> Void)?
+        override func scrollWheel(with event: NSEvent) {
+            onScroll?(event.scrollingDeltaY)
+        }
+    }
+}
+#else
+private struct ScrollWheelCatcher: View {
+    var onScroll: (CGFloat) -> Void
+    var body: some View { Color.clear }
+}
+#endif

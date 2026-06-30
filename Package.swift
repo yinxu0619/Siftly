@@ -3,6 +3,7 @@ import PackageDescription
 
 let package = Package(
     name: "Siftly",
+    defaultLocalization: "en",
     platforms: [
         .macOS(.v14)
     ],

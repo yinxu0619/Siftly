@@ -49,13 +49,13 @@ public struct ContentView: View {
                 .environmentObject(app)
         }
         .alert(
-            "出错了",
+            L10n.errorTitle,
             isPresented: Binding(
                 get: { app.errorMessage != nil },
                 set: { if !$0 { app.errorMessage = nil } }
             )
         ) {
-            Button("好", role: .cancel) {}
+            Button(L10n.ok, role: .cancel) {}
         } message: {
             Text(app.errorMessage ?? "")
         }

@@ -17,10 +17,15 @@ public struct SiftlyApp: App {
         .commands {
             // Route the standard "About Siftly" menu item to our own panel...
             CommandGroup(replacing: .appInfo) {
-                Button("关于 Siftly") { app.isShowingAbout = true }
+                Button(L10n.aboutSiftly) { app.isShowingAbout = true }
             }
             // ...and remove the default Help menu.
             CommandGroup(replacing: .help) {}
+        }
+
+        Settings {
+            SettingsView()
+                .environmentObject(app)
         }
     }
 }

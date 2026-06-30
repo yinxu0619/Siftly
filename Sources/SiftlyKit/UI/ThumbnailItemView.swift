@@ -57,8 +57,12 @@ struct ThumbnailItemView: View {
             app.openPreview(file.url)
         }
         .onTapGesture(count: 1) {
-            let exclusive = !NSEvent.modifierFlags.contains(.command)
-            app.toggleSelection(file.url, exclusive: exclusive)
+            let flags = NSEvent.modifierFlags
+            if flags.contains(.shift) {
+                app.selectRange(to: file.url, additive: flags.contains(.command))
+            } else {
+                app.toggleSelection(file.url, exclusive: !flags.contains(.command))
+            }
         }
         .contextMenu { contextMenu }
         .task(id: file.url) {
@@ -74,25 +78,25 @@ struct ThumbnailItemView: View {
         Button {
             app.openPreview(file.url)
         } label: {
-            Label("打开大图", systemImage: "arrow.up.left.and.arrow.down.right")
+            Label(L10n.openPreview, systemImage: "arrow.up.left.and.arrow.down.right")
         }
 
         Button {
             app.openEditor(file.url)
         } label: {
-            Label("编辑 / 后期…", systemImage: "slider.horizontal.3")
+            Label(L10n.editPhoto, systemImage: "slider.horizontal.3")
         }
 
         Button {
             app.revealInFinder(file.url)
         } label: {
-            Label("在访达中显示", systemImage: "folder")
+            Label(L10n.revealInFinder, systemImage: "folder")
         }
 
         Button {
             app.openWithDefaultApp(file.url)
         } label: {
-            Label("用默认应用打开", systemImage: "square.and.arrow.up")
+            Label(L10n.openWithDefaultApp, systemImage: "square.and.arrow.up")
         }
 
         Divider()
@@ -105,9 +109,9 @@ struct ThumbnailItemView: View {
                     Label(String(repeating: "★", count: star), systemImage: "star")
                 }
             }
-            Button("清除评分") { app.setRating(.none, for: file) }
+            Button(L10n.clearRating) { app.setRating(.none, for: file) }
         } label: {
-            Label("评分", systemImage: "star")
+            Label(L10n.rating, systemImage: "star")
         }
 
         Menu {
@@ -119,7 +123,7 @@ struct ThumbnailItemView: View {
                 }
             }
         } label: {
-            Label("标签", systemImage: "tag")
+            Label(L10n.label, systemImage: "tag")
         }
 
         Divider()
@@ -127,12 +131,12 @@ struct ThumbnailItemView: View {
         Button {
             app.copyToClipboard(file.name)
         } label: {
-            Label("拷贝文件名", systemImage: "doc.on.doc")
+            Label(L10n.copyFilename, systemImage: "doc.on.doc")
         }
         Button {
             app.copyToClipboard(file.url.path)
         } label: {
-            Label("拷贝路径", systemImage: "doc.on.doc")
+            Label(L10n.copyPath, systemImage: "doc.on.doc")
         }
 
         Divider()
@@ -140,7 +144,7 @@ struct ThumbnailItemView: View {
         Button(role: .destructive) {
             app.requestDelete(for: file.url)
         } label: {
-            Label("移入废纸篓", systemImage: "trash")
+            Label(L10n.moveToTrash, systemImage: "trash")
         }
     }
 

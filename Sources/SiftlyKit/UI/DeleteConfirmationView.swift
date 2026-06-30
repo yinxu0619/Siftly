@@ -11,33 +11,30 @@ struct DeleteConfirmationView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Label("确认删除", systemImage: "trash")
+            Label(L10n.confirmDelete, systemImage: "trash")
                 .font(.title2.bold())
 
-            Text("以下 \(plan.count) 个文件将\(permanent ? "被永久删除" : "被移入废纸篓")（共 \(plan.totalSizeDescription)）。配对文件会一并删除。")
+            Text(L10n.deletePlanBody(plan.count, plan.totalSizeDescription, permanent))
                 .foregroundStyle(.secondary)
 
             if app.crossCardMode {
-                Label(
-                    "跨卡模式：按文件名跨卡配对。请确认下方清单中各卡的文件确实对应同一张照片（相机文件名可能重复）。",
-                    systemImage: "exclamationmark.triangle.fill"
-                )
-                .font(.caption)
-                .foregroundStyle(.orange)
-                .padding(8)
-                .background(Color.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 6))
+                Label(L10n.crossCardWarning, systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+                    .padding(8)
+                    .background(Color.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 6))
             }
 
             List {
                 if !plan.directlySelected.isEmpty {
-                    Section("已选择 (\(plan.directlySelected.count))") {
+                    Section(L10n.directlySelected(plan.directlySelected.count)) {
                         ForEach(plan.directlySelected) { file in
                             fileRow(file, paired: false)
                         }
                     }
                 }
                 if !plan.pairedAdditions.isEmpty {
-                    Section("配对联动 (\(plan.pairedAdditions.count))") {
+                    Section(L10n.pairedAdditions(plan.pairedAdditions.count)) {
                         ForEach(plan.pairedAdditions) { file in
                             fileRow(file, paired: true)
                         }
@@ -47,7 +44,7 @@ struct DeleteConfirmationView: View {
             .frame(minHeight: 240)
 
             Toggle(isOn: $permanent) {
-                Label("直接删除（不进废纸篓，不可恢复）", systemImage: "exclamationmark.octagon.fill")
+                Label(L10n.deleteDirectToggle, systemImage: "exclamationmark.octagon.fill")
                     .foregroundStyle(permanent ? Color.red : Color.primary)
             }
             .toggleStyle(.checkbox)
@@ -55,17 +52,17 @@ struct DeleteConfirmationView: View {
 
             if working {
                 ProgressView(value: app.deletionProgress) {
-                    Text("正在\(permanent ? "删除" : "移入废纸篓") \(app.deletionDone)/\(app.deletionTotal)")
+                    Text(L10n.deletingProgress(app.deletionDone, app.deletionTotal, permanent))
                         .font(.caption)
                 }
             }
 
             HStack {
                 Spacer()
-                Button("取消", role: .cancel) { dismiss() }
+                Button(L10n.cancel, role: .cancel) { dismiss() }
                     .keyboardShortcut(.cancelAction)
                     .disabled(working)
-                Button(permanent ? "直接删除" : "移入废纸篓", role: .destructive) {
+                Button(permanent ? L10n.deletePermanent : L10n.moveToTrash, role: .destructive) {
                     showFinalConfirm = true
                 }
                 .keyboardShortcut(.defaultAction)
@@ -75,13 +72,11 @@ struct DeleteConfirmationView: View {
         .padding()
         .frame(width: 460, height: 500)
         .confirmationDialog(
-            permanent
-                ? "确定永久删除 \(plan.count) 个文件？此操作不可恢复！"
-                : "确定将 \(plan.count) 个文件移入废纸篓？",
+            permanent ? L10n.confirmPermanentDialog(plan.count) : L10n.confirmTrashDialog(plan.count),
             isPresented: $showFinalConfirm,
             titleVisibility: .visible
         ) {
-            Button(permanent ? "永久删除" : "移入废纸篓", role: .destructive) {
+            Button(permanent ? L10n.deletePermanent : L10n.moveToTrash, role: .destructive) {
                 let captured = plan
                 let isPermanent = permanent
                 working = true
@@ -91,11 +86,9 @@ struct DeleteConfirmationView: View {
                     dismiss()
                 }
             }
-            Button("取消", role: .cancel) {}
+            Button(L10n.cancel, role: .cancel) {}
         } message: {
-            Text(permanent
-                ? "文件将从存储卡直接删除，无法通过废纸篓或撤销 (⌘Z) 恢复。"
-                : "文件将移动到「废纸篓」，可在废纸篓或用撤销 (⌘Z) 恢复。")
+            Text(permanent ? L10n.permanentDialogMessage : L10n.trashDialogMessage)
         }
     }
 

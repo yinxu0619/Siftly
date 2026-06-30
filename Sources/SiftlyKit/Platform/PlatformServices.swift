@@ -64,7 +64,7 @@ public enum FileScanError: LocalizedError {
     public var errorDescription: String? {
         switch self {
         case .cannotAccess(let url):
-            return "无法访问目录：\(url.path)"
+            return L10n.Error.cannotAccessDirectory(url.path)
         }
     }
 }
@@ -75,7 +75,7 @@ public enum TrashError: LocalizedError {
     public var errorDescription: String? {
         switch self {
         case .notImplemented:
-            return "当前平台暂不支持移入废纸篓"
+            return L10n.Error.trashNotSupported
         }
     }
 }

@@ -18,7 +18,15 @@ struct EditorView: View {
     @State private var renderTask: Task<Void, Never>?
     @State private var isExportSheet = false
 
+    // Crop / geometry state.
+    @State private var cropMode = false
+    @State private var cropDraft = CGRect(x: 0, y: 0, width: 1, height: 1)
+    @State private var cropImage: NSImage?
+    @State private var cropAspect: CropAspect = .free
+    @State private var autoLeveling = false
+
     private let previewMaxDimension: CGFloat = 1800
+    private static let fullRect = CGRect(x: 0, y: 0, width: 1, height: 1)
 
     var body: some View {
         ZStack {
@@ -33,6 +41,9 @@ struct EditorView: View {
         }
         .task(id: file.url) { await loadInitial() }
         .onChange(of: adjustments) { _, _ in scheduleRender() }
+        .onChange(of: adjustments.rotationQuarters) { _, _ in if cropMode { resetCropDraft(); renderCropImage() } }
+        .onChange(of: adjustments.flipHorizontal) { _, _ in if cropMode { resetCropDraft(); renderCropImage() } }
+        .onChange(of: adjustments.straighten) { _, _ in if cropMode { renderCropImage() } }
         .background(closeShortcut)
         .sheet(isPresented: $isExportSheet) {
             ExportOptionsView(source: file.url, adjustments: adjustments)
@@ -43,6 +54,17 @@ struct EditorView: View {
     // MARK: - Preview
 
     private var previewArea: some View {
+        ZStack {
+            if cropMode {
+                cropArea
+            } else {
+                normalPreview
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private var normalPreview: some View {
         ZStack {
             if let image = showOriginal ? original : preview {
                 Image(nsImage: image)
@@ -56,7 +78,7 @@ struct EditorView: View {
 
             if showOriginal {
                 VStack {
-                    Text("原图")
+                    Text(L10n.originalOverlay)
                         .font(.caption.bold())
                         .padding(.horizontal, 10).padding(.vertical, 4)
                         .background(.black.opacity(0.6), in: Capsule())
@@ -66,7 +88,49 @@ struct EditorView: View {
                 }
             }
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private var cropArea: some View {
+        VStack(spacing: 0) {
+            ZStack {
+                if let cropImage {
+                    CropOverlayView(image: cropImage, crop: $cropDraft, lockedNorm: cropLockedNorm)
+                        .padding(24)
+                } else {
+                    ProgressView().controlSize(.large).tint(.white)
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            cropToolbar
+        }
+    }
+
+    private var cropToolbar: some View {
+        HStack(spacing: 12) {
+            Button(L10n.cancel) { cropMode = false }
+            Menu {
+                ForEach(CropAspect.allCases, id: \.self) { a in
+                    Button {
+                        applyAspect(a)
+                    } label: {
+                        if a == cropAspect { Label(a.label, systemImage: "checkmark") } else { Text(a.label) }
+                    }
+                }
+            } label: {
+                Label(cropAspect.label, systemImage: "aspectratio")
+            }
+            .frame(width: 140)
+
+            Button { rotate(-1) } label: { Image(systemName: "rotate.left") }
+            Button { rotate(1) } label: { Image(systemName: "rotate.right") }
+
+            Spacer()
+            Button(L10n.done) { commitCrop() }
+                .buttonStyle(.borderedProminent)
+                .keyboardShortcut(.defaultAction)
+        }
+        .padding()
+        .background(.bar)
     }
 
     // MARK: - Controls
@@ -77,31 +141,55 @@ struct EditorView: View {
             Divider()
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
-                    section("光效") {
-                        AdjustSlider(title: "曝光", value: $adjustments.exposure)
-                        AdjustSlider(title: "亮度", value: $adjustments.brightness)
-                        AdjustSlider(title: "对比度", value: $adjustments.contrast)
-                        AdjustSlider(title: "高光", value: $adjustments.highlights)
-                        AdjustSlider(title: "阴影", value: $adjustments.shadows)
-                        AdjustSlider(title: "HDR", value: $adjustments.hdr, range: 0...100)
+                    section(L10n.sectionRotateCrop) {
+                        HStack(spacing: 8) {
+                            geoButton("rotate.left", L10n.rotateLeftHelp) { rotate(-1) }
+                            geoButton("rotate.right", L10n.rotateRightHelp) { rotate(1) }
+                            geoButton("arrow.left.and.right", L10n.flipHorizontalHelp, active: adjustments.flipHorizontal) {
+                                adjustments.flipHorizontal.toggle()
+                                adjustments.cropRect = nil
+                            }
+                            Spacer()
+                            Button { beginCrop() } label: { Label(L10n.crop, systemImage: "crop") }
+                        }
+                        AdjustSlider(title: L10n.straighten, value: $adjustments.straighten, range: -45...45)
+                        HStack {
+                            Button { autoLevel() } label: {
+                                Label(autoLeveling ? L10n.analyzing : L10n.autoLevel, systemImage: "level")
+                            }
+                            .disabled(autoLeveling)
+                            Spacer()
+                            if adjustments.hasGeometry {
+                                Button(L10n.resetGeometry) { resetGeometry() }
+                                    .font(.caption)
+                            }
+                        }
                     }
-                    section("色彩") {
-                        AdjustSlider(title: "饱和度", value: $adjustments.saturation)
-                        AdjustSlider(title: "自然饱和度", value: $adjustments.vibrance)
-                        AdjustSlider(title: "色温", value: $adjustments.temperature)
-                        AdjustSlider(title: "色调", value: $adjustments.tint)
+                    section(L10n.sectionLight) {
+                        AdjustSlider(title: L10n.exposureAdj, value: $adjustments.exposure)
+                        AdjustSlider(title: L10n.brightness, value: $adjustments.brightness)
+                        AdjustSlider(title: L10n.contrast, value: $adjustments.contrast)
+                        AdjustSlider(title: L10n.highlights, value: $adjustments.highlights)
+                        AdjustSlider(title: L10n.shadows, value: $adjustments.shadows)
+                        AdjustSlider(title: L10n.hdr, value: $adjustments.hdr, range: 0...100)
                     }
-                    section("细节") {
-                        AdjustSlider(title: "锐化", value: $adjustments.sharpen, range: 0...100)
-                        AdjustSlider(title: "暗角", value: $adjustments.vignette, range: 0...100)
+                    section(L10n.sectionColor) {
+                        AdjustSlider(title: L10n.saturation, value: $adjustments.saturation)
+                        AdjustSlider(title: L10n.vibrance, value: $adjustments.vibrance)
+                        AdjustSlider(title: L10n.temperature, value: $adjustments.temperature)
+                        AdjustSlider(title: L10n.tint, value: $adjustments.tint)
                     }
-                    section("曲线") {
+                    section(L10n.sectionDetail) {
+                        AdjustSlider(title: L10n.sharpen, value: $adjustments.sharpen, range: 0...100)
+                        AdjustSlider(title: L10n.vignette, value: $adjustments.vignette, range: 0...100)
+                    }
+                    section(L10n.sectionCurve) {
                         CurveEditorView(curve: $adjustments.curve)
                         HStack {
-                            Text("在曲线上按住拖动即可调整 · 右键点可删除")
+                            Text(L10n.curveHint)
                                 .font(.caption2).foregroundStyle(.secondary)
                             Spacer()
-                            Button("重置曲线") { adjustments.curve = .identity }
+                            Button(L10n.resetCurve) { adjustments.curve = .identity }
                                 .font(.caption)
                                 .disabled(adjustments.curve.isIdentity)
                         }
@@ -130,7 +218,7 @@ struct EditorView: View {
             .buttonStyle(.plain)
             .foregroundStyle(.secondary)
             .keyboardShortcut("w", modifiers: [.command])
-            .help("关闭 (Esc)")
+            .help(L10n.closeHelp)
         }
         .padding()
     }
@@ -140,16 +228,15 @@ struct EditorView: View {
             Button {
                 adjustments = .identity
             } label: {
-                Label("重置全部", systemImage: "arrow.uturn.backward")
+                Label(L10n.resetAll, systemImage: "arrow.uturn.backward")
             }
             .disabled(adjustments.isIdentity)
 
-            // Press & hold to compare with the original.
-            Label("对比", systemImage: "circle.lefthalf.filled")
+            Label(L10n.compare, systemImage: "circle.lefthalf.filled")
                 .labelStyle(.iconOnly)
                 .font(.title3)
                 .foregroundStyle(showOriginal ? Color.accentColor : Color.secondary)
-                .help("按住对比原图")
+                .help(L10n.compareHelp)
                 .gesture(
                     DragGesture(minimumDistance: 0)
                         .onChanged { _ in showOriginal = true }
@@ -161,7 +248,7 @@ struct EditorView: View {
             Button {
                 isExportSheet = true
             } label: {
-                Label("导出", systemImage: "square.and.arrow.down")
+                Label(L10n.export, systemImage: "square.and.arrow.down")
             }
             .buttonStyle(.borderedProminent)
             .disabled(app.isExporting)
@@ -174,6 +261,124 @@ struct EditorView: View {
         VStack(alignment: .leading, spacing: 8) {
             Text(title).font(.subheadline.bold()).foregroundStyle(.secondary)
             content()
+        }
+    }
+
+    private func geoButton(_ systemName: String, _ help: String, active: Bool = false, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: systemName)
+                .frame(width: 26, height: 22)
+        }
+        .buttonStyle(.bordered)
+        .tint(active ? .accentColor : nil)
+        .help(help)
+    }
+
+    // MARK: - Geometry actions
+
+    private func rotate(_ direction: Int) {
+        adjustments.rotationQuarters = (((adjustments.rotationQuarters + direction) % 4) + 4) % 4
+        adjustments.cropRect = nil
+    }
+
+    private func resetGeometry() {
+        adjustments.rotationQuarters = 0
+        adjustments.straighten = 0
+        adjustments.flipHorizontal = false
+        adjustments.cropRect = nil
+    }
+
+    private func autoLevel() {
+        autoLeveling = true
+        Task {
+            let angle = await app.processor.autoStraightenAngle(url: file.url)
+            autoLeveling = false
+            if let angle { adjustments.straighten = angle }
+        }
+    }
+
+    // MARK: - Crop
+
+    private func beginCrop() {
+        cropDraft = adjustments.cropRect ?? Self.fullRect
+        cropAspect = .free
+        cropMode = true
+        renderCropImage()
+    }
+
+    private func commitCrop() {
+        let r = cropDraft
+        let isFull = r.minX < 0.001 && r.minY < 0.001 && r.width > 0.999 && r.height > 0.999
+        adjustments.cropRect = isFull ? nil : r
+        cropMode = false
+    }
+
+    private func resetCropDraft() {
+        cropDraft = Self.fullRect
+        cropAspect = .free
+    }
+
+    private func renderCropImage() {
+        let current = adjustments
+        Task {
+            let img = await app.processor.renderPreview(
+                url: file.url, adjustments: current, maxDimension: previewMaxDimension, includeCrop: false
+            )
+            cropImage = img
+        }
+    }
+
+    private var cropLockedNorm: CGFloat? { lockedNorm(for: cropAspect) }
+
+    private func lockedNorm(for a: CropAspect) -> CGFloat? {
+        switch a {
+        case .free:
+            return nil
+        case .original:
+            return 1
+        default:
+            guard let t = a.ratio, let img = cropImage else { return nil }
+            let ar = img.size.width / max(img.size.height, 1)
+            return t / ar
+        }
+    }
+
+    private func applyAspect(_ a: CropAspect) {
+        cropAspect = a
+        guard let norm = lockedNorm(for: a) else { return }
+        var w: CGFloat = 1
+        var h: CGFloat = 1
+        if norm >= 1 { w = 1; h = 1 / norm } else { h = 1; w = norm }
+        cropDraft = CGRect(x: (1 - w) / 2, y: (1 - h) / 2, width: w, height: h)
+    }
+
+    private enum CropAspect: CaseIterable {
+        case free, original, square, r3_2, r2_3, r4_3, r3_4, r16_9
+
+        var label: String {
+            switch self {
+            case .free: return L10n.cropFree
+            case .original: return L10n.cropOriginal
+            case .square: return "1:1"
+            case .r3_2: return "3:2"
+            case .r2_3: return "2:3"
+            case .r4_3: return "4:3"
+            case .r3_4: return "3:4"
+            case .r16_9: return "16:9"
+            }
+        }
+
+        /// Pixel aspect (width / height); nil for free/original.
+        var ratio: CGFloat? {
+            switch self {
+            case .free, .original: return nil
+            case .square: return 1
+            case .r3_2: return 3.0 / 2.0
+            case .r2_3: return 2.0 / 3.0
+            case .r4_3: return 4.0 / 3.0
+            case .r3_4: return 3.0 / 4.0
+            case .r16_9: return 16.0 / 9.0
+            }
         }
     }
 

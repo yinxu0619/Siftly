@@ -37,6 +37,40 @@ final class EditingTests: XCTestCase {
         XCTAssertEqual(data.count, 32 * 3 * MemoryLayout<Float>.size)
     }
 
+    func testGeometryFieldsAffectIdentityAndFlag() {
+        var a = ImageAdjustments()
+        XCTAssertFalse(a.hasGeometry)
+        XCTAssertTrue(a.isIdentity)
+
+        a.rotationQuarters = 1
+        XCTAssertTrue(a.hasGeometry)
+        XCTAssertFalse(a.isIdentity)
+
+        var b = ImageAdjustments()
+        b.straighten = 3.5
+        XCTAssertTrue(b.hasGeometry)
+
+        var c = ImageAdjustments()
+        c.cropRect = CGRect(x: 0.1, y: 0.1, width: 0.8, height: 0.8)
+        XCTAssertTrue(c.hasGeometry)
+        XCTAssertFalse(c.isIdentity)
+
+        var d = ImageAdjustments()
+        d.flipHorizontal = true
+        XCTAssertTrue(d.hasGeometry)
+    }
+
+    func testAdjustmentsRoundTripEncodesGeometry() throws {
+        var a = ImageAdjustments()
+        a.rotationQuarters = 3
+        a.straighten = -7.2
+        a.flipHorizontal = true
+        a.cropRect = CGRect(x: 0.05, y: 0.1, width: 0.6, height: 0.7)
+        let data = try JSONEncoder().encode(a)
+        let decoded = try JSONDecoder().decode(ImageAdjustments.self, from: data)
+        XCTAssertEqual(decoded, a)
+    }
+
     func testExportFormatQualitySupport() {
         XCTAssertTrue(ExportFormat.jpeg.supportsQuality)
         XCTAssertTrue(ExportFormat.heic.supportsQuality)

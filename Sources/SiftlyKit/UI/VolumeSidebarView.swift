@@ -7,15 +7,15 @@ struct VolumeSidebarView: View {
         List(selection: selectionBinding) {
             if app.volumes.count > 1 {
                 Section {
-                    Label("所有存储卡", systemImage: "square.stack.3d.up")
+                    Label(L10n.allStorageCards, systemImage: "square.stack.3d.up")
                         .tag(AppState.allCardsTag)
-                        .help("合并浏览所有卡，按文件名跨卡配对、同步删除")
+                        .help(L10n.allStorageCardsHelp)
                 } header: {
-                    Text("跨卡配对")
+                    Text(L10n.crossCardPairing)
                 }
             }
 
-            Section("存储卡") {
+            Section(L10n.storageCards) {
                 ForEach(app.volumes) { volume in
                     VStack(alignment: .leading, spacing: 2) {
                         Label(volume.name, systemImage: "sdcard")
@@ -32,9 +32,9 @@ struct VolumeSidebarView: View {
         .overlay {
             if app.volumes.isEmpty {
                 ContentUnavailableView(
-                    "未检测到存储卡",
+                    L10n.noStorageCards,
                     systemImage: "sdcard",
-                    description: Text("插入 SD / CFexpress 卡后点击刷新")
+                    description: Text(L10n.insertCardHint)
                 )
             }
         }
@@ -45,10 +45,10 @@ struct VolumeSidebarView: View {
                 } label: {
                     Image(systemName: "arrow.clockwise")
                 }
-                .help("刷新存储卡与文件列表")
+                .help(L10n.refreshHelp)
             }
         }
-        .navigationTitle("Siftly")
+        .navigationTitle(L10n.appName)
     }
 
     private var selectionBinding: Binding<String?> {

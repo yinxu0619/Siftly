@@ -3,7 +3,7 @@ import SwiftUI
 import AppKit
 #endif
 
-/// "关于 / 赞助" panel: app info plus donation options (WeChat, Alipay, PayPal).
+/// About / sponsor panel.
 struct AboutView: View {
     @EnvironmentObject private var app: AppState
     @Environment(\.dismiss) private var dismiss
@@ -13,8 +13,8 @@ struct AboutView: View {
         var id: String { rawValue }
         var title: String {
             switch self {
-            case .wechat: return "微信"
-            case .alipay: return "支付宝"
+            case .wechat: return L10n.wechat
+            case .alipay: return L10n.alipay
             case .paypal: return "PayPal"
             }
         }
@@ -36,15 +36,13 @@ struct AboutView: View {
             Divider()
             HStack {
                 Spacer()
-                Button("完成") { dismiss() }
+                Button(L10n.done) { dismiss() }
                     .keyboardShortcut(.defaultAction)
             }
         }
         .padding(24)
         .frame(width: 420)
     }
-
-    // MARK: - Header
 
     private var header: some View {
         VStack(spacing: 8) {
@@ -58,9 +56,9 @@ struct AboutView: View {
                     .foregroundStyle(.secondary)
             }
 
-            Text("Siftly").font(.title.bold())
-            Text("版本 \(version)").font(.caption).foregroundStyle(.secondary)
-            Text("轻量存储卡素材管理工具 · RAW/JPG 配对联动删除 · 简单后期")
+            Text(L10n.appName).font(.title.bold())
+            Text(L10n.version(version)).font(.caption).foregroundStyle(.secondary)
+            Text(L10n.aboutTagline)
                 .font(.callout)
                 .multilineTextAlignment(.center)
                 .foregroundStyle(.secondary)
@@ -68,13 +66,11 @@ struct AboutView: View {
         }
     }
 
-    // MARK: - Sponsor
-
     private var sponsor: some View {
         VStack(spacing: 12) {
             VStack(spacing: 2) {
-                Text("赞助支持 ❤️").font(.headline)
-                Text("如果这个小工具帮到了你，欢迎请作者喝杯咖啡～")
+                Text(L10n.sponsorTitle).font(.headline)
+                Text(L10n.sponsorBlurb)
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -96,9 +92,9 @@ struct AboutView: View {
     private var sponsorContent: some View {
         switch tab {
         case .wechat:
-            qrCode(named: "sponsor-wechat", caption: "微信扫一扫赞助", accent: Color.green)
+            qrCode(named: "sponsor-wechat", caption: L10n.wechatQRHint, accent: Color.green)
         case .alipay:
-            qrCode(named: "sponsor-alipay", caption: "支付宝扫一扫赞助", accent: Color.blue)
+            qrCode(named: "sponsor-alipay", caption: L10n.alipayQRHint, accent: Color.blue)
         case .paypal:
             paypal
         }
@@ -118,7 +114,7 @@ struct AboutView: View {
                 RoundedRectangle(cornerRadius: 10)
                     .fill(Color.secondary.opacity(0.15))
                     .frame(width: 240, height: 240)
-                    .overlay(Text("二维码未找到").foregroundStyle(.secondary))
+                    .overlay(Text(L10n.qrNotFound).foregroundStyle(.secondary))
             }
             Label(caption, systemImage: "qrcode")
                 .font(.callout)
@@ -131,13 +127,13 @@ struct AboutView: View {
             Image(systemName: "creditcard.fill")
                 .font(.system(size: 56))
                 .foregroundStyle(.blue)
-            Text("通过 PayPal 在线赞助")
+            Text(L10n.paypalOnline)
                 .font(.callout)
                 .foregroundStyle(.secondary)
             Button {
                 app.openExternalURL(paypalURL)
             } label: {
-                Label("打开 PayPal 赞助页", systemImage: "arrow.up.right.square")
+                Label(L10n.openPayPal, systemImage: "arrow.up.right.square")
                     .frame(maxWidth: 240)
             }
             .buttonStyle(.borderedProminent)
@@ -145,7 +141,7 @@ struct AboutView: View {
             Button {
                 app.copyToClipboard(paypalURL)
             } label: {
-                Text("复制链接")
+                Text(L10n.copyLink)
                     .font(.caption)
             }
             .buttonStyle(.plain)
@@ -154,10 +150,8 @@ struct AboutView: View {
         .frame(maxWidth: .infinity)
     }
 
-    // MARK: - Helpers
-
     private var appIcon: NSImage? {
-        #if canImport(AppKit)
+        #if os(macOS)
         NSApplication.shared.applicationIconImage
         #else
         nil

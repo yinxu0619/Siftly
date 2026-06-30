@@ -30,7 +30,7 @@ struct CurveEditorView: View {
                         .position(p)
                         .contextMenu {
                             if i != 0 && i != curve.points.count - 1 {
-                                Button("删除该点", role: .destructive) { removePoint(i) }
+                                Button(L10n.deleteCurvePoint, role: .destructive) { removePoint(i) }
                             }
                         }
                 }

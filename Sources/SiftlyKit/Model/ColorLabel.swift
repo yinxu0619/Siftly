@@ -8,14 +8,14 @@ public enum ColorLabel: String, Codable, CaseIterable, Identifiable {
 
     public var displayName: String {
         switch self {
-        case .none: return "无"
-        case .red: return "红"
-        case .orange: return "橙"
-        case .yellow: return "黄"
-        case .green: return "绿"
-        case .blue: return "蓝"
-        case .purple: return "紫"
-        case .gray: return "灰"
+        case .none: return L10n.labelNone
+        case .red: return L10n.labelRed
+        case .orange: return L10n.labelOrange
+        case .yellow: return L10n.labelYellow
+        case .green: return L10n.labelGreen
+        case .blue: return L10n.labelBlue
+        case .purple: return L10n.labelPurple
+        case .gray: return L10n.labelGray
         }
     }
 }

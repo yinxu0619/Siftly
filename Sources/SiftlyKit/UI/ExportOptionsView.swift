@@ -19,15 +19,15 @@ struct ExportOptionsView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Label("导出编辑结果", systemImage: "square.and.arrow.down")
+            Label(L10n.exportTitle, systemImage: "square.and.arrow.down")
                 .font(.title2.bold())
 
-            Text("原图不会被修改，编辑结果会保存为新文件。")
+            Text(L10n.exportHint)
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
             VStack(alignment: .leading, spacing: 6) {
-                Text("格式").font(.subheadline.bold())
+                Text(L10n.format).font(.subheadline.bold())
                 Picker("", selection: $settings.format) {
                     ForEach(ExportFormat.allCases) { fmt in
                         Text(fmt.title).tag(fmt)
@@ -40,20 +40,20 @@ struct ExportOptionsView: View {
             if settings.format.supportsQuality {
                 VStack(alignment: .leading, spacing: 6) {
                     HStack {
-                        Text("质量").font(.subheadline.bold())
+                        Text(L10n.quality).font(.subheadline.bold())
                         Spacer()
                         Text("\(Int(settings.quality * 100))%")
                             .font(.callout.monospacedDigit())
                             .foregroundStyle(.secondary)
                     }
                     Slider(value: $settings.quality, in: 0.3...1.0)
-                    Text("数值越低文件越小，画质损失越多。")
+                    Text(L10n.qualityHint)
                         .font(.caption2).foregroundStyle(.secondary)
                 }
             }
 
             VStack(alignment: .leading, spacing: 6) {
-                Text("尺寸").font(.subheadline.bold())
+                Text(L10n.resize).font(.subheadline.bold())
                 Picker("", selection: resizeBinding) {
                     ForEach(ExportSettings.resizePresets.indices, id: \.self) { i in
                         Text(resizeLabel(ExportSettings.resizePresets[i]))
@@ -66,17 +66,17 @@ struct ExportOptionsView: View {
             if app.isExporting {
                 HStack(spacing: 8) {
                     ProgressView().controlSize(.small)
-                    Text("正在导出…").font(.callout).foregroundStyle(.secondary)
+                    Text(L10n.exporting).font(.callout).foregroundStyle(.secondary)
                 }
             }
 
             HStack {
-                Button("取消", role: .cancel) { dismiss() }
+                Button(L10n.cancel, role: .cancel) { dismiss() }
                     .keyboardShortcut(.cancelAction)
                 Spacer()
-                Button("另存为…") { saveAs() }
+                Button(L10n.saveAs) { saveAs() }
                     .disabled(app.isExporting)
-                Button("导出到原文件夹") { exportToSourceFolder() }
+                Button(L10n.exportToFolder) { exportToSourceFolder() }
                     .buttonStyle(.borderedProminent)
                     .disabled(app.isExporting)
             }
@@ -90,11 +90,9 @@ struct ExportOptionsView: View {
     }
 
     private func resizeLabel(_ value: Int?) -> String {
-        guard let value else { return "原始尺寸" }
-        return "长边 \(value) px"
+        guard let value else { return L10n.originalSize }
+        return L10n.longEdgePx(value)
     }
-
-    // MARK: - Actions
 
     private func exportToSourceFolder() {
         let dest = app.suggestedExportURL(for: source, format: settings.format)

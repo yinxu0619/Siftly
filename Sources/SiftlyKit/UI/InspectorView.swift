@@ -22,10 +22,10 @@ struct InspectorView: View {
                     .padding()
                 }
             } else {
-                ContentUnavailableView("未选择文件", systemImage: "info.circle")
+                ContentUnavailableView(L10n.noFileSelected, systemImage: "info.circle")
             }
         }
-        .navigationTitle("信息")
+        .navigationTitle(L10n.inspectorTitle)
         .task(id: app.currentFileURL) {
             await loadEXIF()
         }
@@ -35,18 +35,18 @@ struct InspectorView: View {
         VStack(alignment: .leading, spacing: 6) {
             Text(file.name).font(.headline).textSelection(.enabled)
             if let size = file.fileSize {
-                infoRow("大小", ByteCountFormatter.string(fromByteCount: size, countStyle: .file))
+                infoRow(L10n.size, ByteCountFormatter.string(fromByteCount: size, countStyle: .file))
             }
             if let date = file.modificationDate {
-                infoRow("修改时间", date.formatted(date: .abbreviated, time: .shortened))
+                infoRow(L10n.modified, date.formatted(date: .abbreviated, time: .shortened))
             }
-            infoRow("格式", file.ext.uppercased())
+            infoRow(L10n.format, file.ext.uppercased())
             if app.pairing.isPaired(file.url) {
                 let partners = app.pairing.partners(of: file.url)
                     .map { $0.lastPathComponent }
                     .sorted()
                     .joined(separator: ", ")
-                infoRow("配对", partners)
+                infoRow(L10n.pairedWith, partners)
             }
         }
     }
@@ -54,7 +54,7 @@ struct InspectorView: View {
     private func markSection(_ file: MediaFile) -> some View {
         let mark = app.mark(for: file)
         return VStack(alignment: .leading, spacing: 8) {
-            Text("标记").font(.subheadline).foregroundStyle(.secondary)
+            Text(L10n.marks).font(.subheadline).foregroundStyle(.secondary)
             HStack(spacing: 4) {
                 ForEach(1...5, id: \.self) { star in
                     Image(systemName: star <= mark.rating.stars ? "star.fill" : "star")
@@ -87,20 +87,20 @@ struct InspectorView: View {
     @ViewBuilder
     private var exifSection: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("EXIF").font(.subheadline).foregroundStyle(.secondary)
+            Text(L10n.exif).font(.subheadline).foregroundStyle(.secondary)
             if isLoadingEXIF {
                 ProgressView().controlSize(.small)
             } else if let exif {
-                if let dim = exif.dimensionDescription { infoRow("尺寸", dim) }
-                if let model = exif.cameraModel { infoRow("相机", model) }
-                if let lens = exif.lensModel { infoRow("镜头", lens) }
-                if let iso = exif.iso { infoRow("ISO", "\(iso)") }
-                if let f = exif.aperture { infoRow("光圈", String(format: "f/%.1f", f)) }
-                if let s = exif.shutterSpeed { infoRow("快门", s) }
-                if let fl = exif.focalLength { infoRow("焦距", String(format: "%.0fmm", fl)) }
-                if let date = exif.dateTaken { infoRow("拍摄时间", date) }
+                if let dim = exif.dimensionDescription { infoRow(L10n.dimensions, dim) }
+                if let model = exif.cameraModel { infoRow(L10n.camera, model) }
+                if let lens = exif.lensModel { infoRow(L10n.lens, lens) }
+                if let iso = exif.iso { infoRow(L10n.iso, "\(iso)") }
+                if let f = exif.aperture { infoRow(L10n.aperture, String(format: "f/%.1f", f)) }
+                if let s = exif.shutterSpeed { infoRow(L10n.shutter, s) }
+                if let fl = exif.focalLength { infoRow(L10n.focalLength, String(format: "%.0fmm", fl)) }
+                if let date = exif.dateTaken { infoRow(L10n.dateTaken, date) }
             } else {
-                Text("无 EXIF 信息").font(.caption).foregroundStyle(.secondary)
+                Text(L10n.noExif).font(.caption).foregroundStyle(.secondary)
             }
         }
     }

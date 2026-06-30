@@ -30,14 +30,14 @@ public struct PairingRule: Codable, Equatable {
     /// Universal rule: any supported RAW pairs with JPG/HEIC. Works across Sony,
     /// Canon, Nikon, Fuji, etc. out of the box. This is the default.
     public static let universal = PairingRule(
-        name: "通用 RAW + JPG",
+        name: L10n.pairingUniversal,
         groups: [Array(MediaCatalog.rawExtensions) + companions]
     )
 
-    public static let sony = PairingRule(name: "索尼 ARW + JPG", groups: [["arw"] + companions])
-    public static let canon = PairingRule(name: "佳能 CR2/CR3 + JPG", groups: [["cr2", "cr3"] + companions])
-    public static let nikon = PairingRule(name: "尼康 NEF/NRW + JPG", groups: [["nef", "nrw"] + companions])
-    public static let fuji = PairingRule(name: "富士 RAF + JPG", groups: [["raf"] + companions])
+    public static let sony = PairingRule(name: L10n.pairingSony, groups: [["arw"] + companions])
+    public static let canon = PairingRule(name: L10n.pairingCanon, groups: [["cr2", "cr3"] + companions])
+    public static let nikon = PairingRule(name: L10n.pairingNikon, groups: [["nef", "nrw"] + companions])
+    public static let fuji = PairingRule(name: L10n.pairingFuji, groups: [["raf"] + companions])
 
     /// Selectable presets shown in the UI.
     public static let presets: [PairingRule] = [universal, sony, canon, nikon, fuji]

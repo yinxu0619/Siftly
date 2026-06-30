@@ -77,6 +77,13 @@ cat > "${CONTENTS}/Info.plist" <<EOF
     <key>CFBundleExecutable</key>
     <string>${APP_NAME}</string>
 ${ICON_LINE}
+    <key>CFBundleDevelopmentRegion</key>
+    <string>en</string>
+    <key>CFBundleLocalizations</key>
+    <array>
+        <string>en</string>
+        <string>zh-Hans</string>
+    </array>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>LSMinimumSystemVersion</key>

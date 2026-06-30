@@ -13,11 +13,11 @@ public enum FormatFilter: String, CaseIterable, Identifiable {
     public var id: String { rawValue }
     public var title: String {
         switch self {
-        case .all: return "全部"
-        case .raw: return "RAW"
-        case .jpg: return "JPG"
-        case .paired: return "已配对"
-        case .unpaired: return "未配对"
+        case .all: return L10n.formatAll
+        case .raw: return L10n.formatRAW
+        case .jpg: return L10n.formatJPG
+        case .paired: return L10n.formatPaired
+        case .unpaired: return L10n.formatUnpaired
         }
     }
 }
@@ -28,9 +28,9 @@ public enum SortKey: String, CaseIterable, Identifiable {
     public var id: String { rawValue }
     public var title: String {
         switch self {
-        case .date: return "拍摄/修改时间"
-        case .name: return "文件名"
-        case .size: return "文件大小"
+        case .date: return L10n.sortDate
+        case .name: return L10n.sortName
+        case .size: return L10n.sortSize
         }
     }
 }
@@ -79,7 +79,7 @@ public final class AppState: ObservableObject {
     @Published public var sortKey: SortKey = .date
     @Published public var sortAscending: Bool = false
     @Published public private(set) var isScanning = false
-    @Published public var statusMessage: String = "未检测到存储卡"
+    @Published public var statusMessage: String = L10n.Status.noCards
     /// User-facing error, surfaced as an alert. Cleared when dismissed.
     @Published public var errorMessage: String?
     /// Marks keyed by `volumeID::relativePath`, mirrored for SwiftUI updates.
@@ -102,7 +102,25 @@ public final class AppState: ObservableObject {
     private var lastDeletedItems: [DeletedItem] = []
     @Published public private(set) var canUndo = false
 
+    // User preferences (persisted in UserDefaults).
+    private static let prefetchKey = "siftly.preview.prefetchCount"
+    /// How many neighbors (per side) to preload around the viewed photo. 0 = off.
+    @Published public var previewPrefetchCount: Int {
+        didSet {
+            let clamped = max(0, min(previewPrefetchCount, 20))
+            if clamped != previewPrefetchCount { previewPrefetchCount = clamped; return }
+            UserDefaults.standard.set(previewPrefetchCount, forKey: Self.prefetchKey)
+            thumbnails.configurePreviewCache(count: previewPrefetchCount)
+        }
+    }
+
+    /// Pixel size used for the full-size preview (and its prefetch cache).
+    public static let previewPixelSize = CGSize(width: 2600, height: 2600)
+
     public init() {
+        let storedPrefetch = UserDefaults.standard.object(forKey: Self.prefetchKey) as? Int
+        self.previewPrefetchCount = storedPrefetch ?? 3
+
         #if os(macOS)
         self.volumeService = MacVolumeService()
         self.fileSystem = MacFileSystemService()
@@ -115,10 +133,27 @@ public final class AppState: ObservableObject {
         self.thumbnails = ThumbnailProvider(service: WindowsThumbnailService())
         #endif
 
+        thumbnails.configurePreviewCache(count: previewPrefetchCount)
+
         volumeService.startObserving { [weak self] in
             self?.refreshVolumes()
         }
         refreshVolumes()
+    }
+
+    /// Preloads the photos adjacent to `url` (per the user's prefetch setting) so
+    /// flipping to the next/previous photo in the viewer is instant.
+    public func prefetchAdjacentPreviews(around url: URL) {
+        let n = previewPrefetchCount
+        guard n > 0 else { return }
+        let list = displayedFiles
+        guard let idx = list.firstIndex(where: { $0.url == url }) else { return }
+        var urls: [URL] = []
+        for step in 1...n {
+            if idx + step < list.count { urls.append(list[idx + step].url) }
+            if idx - step >= 0 { urls.append(list[idx - step].url) }
+        }
+        thumbnails.prefetchPreviews(urls, pixelSize: Self.previewPixelSize)
     }
 
     /// True when browsing/merging all cards (enables cross-card pairing).
@@ -145,7 +180,7 @@ public final class AppState: ObservableObject {
         if crossCardMode {
             if current.isEmpty {
                 scanTask?.cancel()
-                resetBrowseState(message: "未检测到存储卡")
+                resetBrowseState(message: L10n.Status.noCards)
                 browseSelection = nil
             } else {
                 // Re-merge across the (possibly changed) set of cards.
@@ -157,14 +192,14 @@ public final class AppState: ObservableObject {
         if let id = browseSelection, !current.contains(where: { $0.id == id }) {
             // Previously selected card was removed mid-session.
             scanTask?.cancel()
-            resetBrowseState(message: "存储卡已移除")
+            resetBrowseState(message: L10n.Status.cardRemoved)
             browseSelection = nil
         }
 
         if browseSelection == nil, let first = current.first {
             selectVolume(first)
         } else if current.isEmpty {
-            statusMessage = "未检测到存储卡"
+            statusMessage = L10n.Status.noCards
         }
     }
 
@@ -220,8 +255,8 @@ public final class AppState: ObservableObject {
         rule.crossLocation = crossCardMode
         let extensions = rule.allExtensions.union(MediaCatalog.imageExtensions)
         let fs = fileSystem
-        let scopeName = crossCardMode ? "所有存储卡" : (vols.first?.name ?? "")
-        statusMessage = "正在扫描 \(scopeName)…"
+        let scopeName = crossCardMode ? L10n.allStorageCards : (vols.first?.name ?? "")
+        statusMessage = L10n.Status.scanning(scopeName)
 
         scanTask = Task { [weak self] in
             // Stream batches (off-main) from each target volume, stamping the
@@ -255,7 +290,7 @@ public final class AppState: ObservableObject {
                     guard let self, self.scanID == token else { return }
                     collected.append(contentsOf: batch)
                     self.files.append(contentsOf: batch)
-                    self.statusMessage = "正在扫描… 已发现 \(collected.count) 个文件"
+                    self.statusMessage = L10n.Status.scanningFound(collected.count)
                 }
 
                 if Task.isCancelled { return }
@@ -268,17 +303,17 @@ public final class AppState: ObservableObject {
                 self.isScanning = false
                 let pairedCount = sorted.filter { self.pairing.isPaired($0.url) }.count
                 if self.crossCardMode {
-                    self.statusMessage = "\(vols.count) 张卡 · \(sorted.count) 个文件 · \(pairedCount) 个已配对"
+                    self.statusMessage = L10n.Status.multiCardSummary(vols.count, sorted.count, pairedCount)
                 } else {
-                    self.statusMessage = "\(sorted.count) 个文件"
+                    self.statusMessage = L10n.Status.fileCount(sorted.count)
                 }
             } catch {
                 if Task.isCancelled { return }
                 guard let self, self.scanID == token else { return }
                 self.isScanning = false
                 self.files = []
-                self.statusMessage = "扫描失败"
-                self.errorMessage = Self.friendlyMessage(for: error, context: "扫描存储卡")
+                self.statusMessage = L10n.Status.scanFailed
+                self.errorMessage = Self.friendlyMessage(for: error, context: L10n.Error.scanContext)
             }
         }
     }
@@ -287,21 +322,25 @@ public final class AppState: ObservableObject {
         if let scanError = error as? FileScanError {
             switch scanError {
             case .cannotAccess:
-                return "\(context)失败：无法访问目录，可能是权限不足。请在「系统设置 > 隐私与安全性 > 完全磁盘访问权限」中授权 Siftly。"
+                return L10n.Error.accessDenied(context)
             }
         }
         let nsError = error as NSError
         if nsError.domain == NSCocoaErrorDomain,
            nsError.code == NSFileReadNoPermissionError || nsError.code == NSFileWriteNoPermissionError {
-            return "\(context)失败：权限不足。请在系统设置中授予 Siftly 文件访问权限。"
+            return L10n.Error.permissionDenied(context)
         }
-        return "\(context)失败：\(error.localizedDescription)"
+        return L10n.Error.generic(context, error.localizedDescription)
     }
 
     // MARK: - Selection
 
+    /// Anchor used as the fixed end for Shift range-selection.
+    public private(set) var selectionAnchor: URL?
+
     public func toggleSelection(_ url: URL, exclusive: Bool) {
         currentFileURL = url
+        selectionAnchor = url
         if exclusive {
             selection = [url]
         } else if selection.contains(url) {
@@ -309,6 +348,27 @@ public final class AppState: ObservableObject {
         } else {
             selection.insert(url)
         }
+    }
+
+    /// Shift-click: select the contiguous range (in displayed order) between the
+    /// current anchor and `url`. With `additive` (Shift+⌘) the range is added to
+    /// the existing selection; otherwise it replaces it.
+    public func selectRange(to url: URL, additive: Bool) {
+        let list = displayedFiles.map(\.url)
+        guard let target = list.firstIndex(of: url) else { return }
+        let anchorURL = selectionAnchor ?? currentFileURL
+        let anchor = anchorURL.flatMap { list.firstIndex(of: $0) } ?? target
+        let lo = min(anchor, target), hi = max(anchor, target)
+        let range = Set(list[lo...hi])
+        selection = additive ? selection.union(range) : range
+        currentFileURL = url
+    }
+
+    /// Replaces the selection from a marquee drag, optionally keeping a base set
+    /// (used when the drag started with ⌘ held to extend the existing selection).
+    public func setMarqueeSelection(_ urls: Set<URL>, base: Set<URL>) {
+        selection = base.union(urls)
+        if let first = urls.first { currentFileURL = first }
     }
 
     /// Files after applying search / filter / sort. Drives the grid and the
@@ -469,11 +529,11 @@ public final class AppState: ObservableObject {
                 to: destination
             )
         } catch {
-            errorMessage = "导出失败：\(error.localizedDescription)"
+            errorMessage = L10n.Error.exportFailed(error.localizedDescription)
             return nil
         }
         ingestExported(destination)
-        statusMessage = "已导出：\(destination.lastPathComponent)"
+        statusMessage = L10n.Status.exported(destination.lastPathComponent)
         return destination
     }
 
@@ -536,7 +596,7 @@ public final class AppState: ObservableObject {
         r.crossLocation = crossCardMode
         pairing = pairingEngine.computePairs(files, rule: r)
         let pairedCount = files.filter { pairing.isPaired($0.url) }.count
-        statusMessage = "配对规则：\(rule.name) · \(pairedCount) 个已配对"
+        statusMessage = L10n.Status.pairingRule(rule.name, pairedCount)
     }
 
     // MARK: - Deletion
@@ -574,7 +634,7 @@ public final class AppState: ObservableObject {
         if !crossCardMode {
             guard let volume = selectedVolume,
                   FileManager.default.fileExists(atPath: volume.url.path) else {
-                errorMessage = "存储卡已移除，删除操作已取消。"
+                errorMessage = L10n.Error.cardRemovedCancelDelete
                 return
             }
         }
@@ -636,18 +696,18 @@ public final class AppState: ObservableObject {
         if permanent {
             lastDeletedItems = []
             canUndo = false
-            statusMessage = "已永久删除：\(deleted.count) 个文件"
+            statusMessage = L10n.Status.permanentlyDeleted(deleted.count)
         } else {
             lastDeletedItems = deletedItems
             canUndo = deletedItems.contains { $0.trashed != nil }
-            statusMessage = "已移入废纸篓：\(deleted.count) 个文件"
+            statusMessage = L10n.Status.movedToTrash(deleted.count)
         }
 
         if !failures.isEmpty {
             let shown = failures.prefix(5).joined(separator: ", ")
-            let extra = failures.count > 5 ? " 等 \(failures.count) 个" : ""
-            let verb = permanent ? "删除" : "移入废纸篓"
-            errorMessage = "有 \(failures.count) 个文件未能\(verb)（可能正被占用）：\(shown)\(extra)"
+            let extra = failures.count > 5 ? L10n.Error.andMoreCount(failures.count) : ""
+            let verb = permanent ? L10n.Error.verbDelete : L10n.Error.verbTrash
+            errorMessage = L10n.Error.partialDelete(failures.count, verb, shown, extra)
         }
     }
 
@@ -670,9 +730,9 @@ public final class AppState: ObservableObject {
             }
         }
 
-        statusMessage = "已恢复 \(restored) 个文件"
+        statusMessage = L10n.Status.restored(restored)
         if failed > 0 {
-            errorMessage = "有 \(failed) 个文件恢复失败（可能已被手动清理）。"
+            errorMessage = L10n.Error.restoreFailed(failed)
         }
         rescanCurrentScope()
     }

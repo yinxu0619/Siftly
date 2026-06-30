@@ -23,14 +23,14 @@ struct FilterBarView: View {
                 Button {
                     app.clearFilters()
                 } label: {
-                    Label("清除筛选", systemImage: "xmark.circle")
+                    Label(L10n.clearFilters, systemImage: "xmark.circle")
                 }
                 .buttonStyle(.borderless)
             }
 
             Spacer()
 
-            Text("\(app.displayedFiles.count) / \(app.files.count)")
+            Text(L10n.fileCount(app.displayedFiles.count, app.files.count))
                 .font(.callout)
                 .foregroundStyle(.secondary)
                 .monospacedDigit()
@@ -43,7 +43,7 @@ struct FilterBarView: View {
     private var searchField: some View {
         HStack(spacing: 4) {
             Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
-            TextField("搜索文件名", text: $app.searchText)
+            TextField(L10n.searchFilename, text: $app.searchText)
                 .textFieldStyle(.plain)
                 .frame(width: 150)
             if !app.searchText.isEmpty {
@@ -62,24 +62,24 @@ struct FilterBarView: View {
 
     private var ratingMenu: some View {
         Menu {
-            Button("全部") { app.minRating = 0 }
+            Button(L10n.all) { app.minRating = 0 }
             ForEach([1, 2, 3, 4, 5], id: \.self) { star in
-                Button("\(String(repeating: "★", count: star)) 及以上") { app.minRating = star }
+                Button(L10n.starsAndAbove(star)) { app.minRating = star }
             }
         } label: {
-            Label(app.minRating > 0 ? "★\(app.minRating)+" : "评分", systemImage: "star")
+            Label(app.minRating > 0 ? L10n.ratingAtLeast(app.minRating) : L10n.rating, systemImage: "star")
         }
         .fixedSize()
     }
 
     private var labelMenu: some View {
         Menu {
-            Button("全部") { app.labelFilter = nil }
+            Button(L10n.all) { app.labelFilter = nil }
             ForEach(ColorLabel.allCases) { label in
                 Button(label.displayName) { app.labelFilter = label }
             }
         } label: {
-            Label(app.labelFilter.map { "标签:\($0.displayName)" } ?? "标签", systemImage: "tag")
+            Label(app.labelFilter.map { L10n.labelFilter($0.displayName) } ?? L10n.label, systemImage: "tag")
         }
         .fixedSize()
     }
@@ -98,9 +98,9 @@ struct FilterBarView: View {
                 }
             }
             Divider()
-            Toggle("升序", isOn: $app.sortAscending)
+            Toggle(L10n.ascending, isOn: $app.sortAscending)
         } label: {
-            Label("排序", systemImage: app.sortAscending ? "arrow.up" : "arrow.down")
+            Label(L10n.sort, systemImage: app.sortAscending ? "arrow.up" : "arrow.down")
         }
         .fixedSize()
     }
