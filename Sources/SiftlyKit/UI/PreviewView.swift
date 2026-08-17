@@ -26,7 +26,7 @@ struct PreviewView: View {
     @State private var scrollAccumulator: CGFloat = 0
     @State private var lastScrollStep = Date.distantPast
 
-    private var index: Int? { app.displayedFiles.firstIndex(where: { $0.url == file.url }) }
+    private var index: Int? { app.displayedPosition(of: file.url) }
     private var positionText: String {
         guard let index else { return "" }
         return "\(index + 1) / \(app.displayedFiles.count)"
@@ -55,7 +55,7 @@ struct PreviewView: View {
         .task(id: file.url) {
             resetZoom()
             let url = file.url
-            image = app.thumbnails.cachedImage(for: url)
+            image = app.thumbnails.anyCachedImage(for: url)
             let loaded = await app.thumbnails.previewImage(for: url, pixelSize: AppState.previewPixelSize)
             if !Task.isCancelled { image = loaded }
             app.prefetchAdjacentPreviews(around: url)

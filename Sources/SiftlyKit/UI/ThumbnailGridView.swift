@@ -22,8 +22,17 @@ struct ThumbnailGridView: View {
         ScrollView {
             LazyVGrid(columns: columns, alignment: .leading, spacing: 12) {
                 ForEach(app.displayedFiles) { file in
-                    ThumbnailItemView(file: file, size: thumbSize)
-                        .background(frameReporter(file.url))
+                    ThumbnailItemView(
+                        app: app,
+                        file: file,
+                        size: thumbSize,
+                        isSelected: app.selection.contains(file.url),
+                        isPaired: app.pairing.isPaired(file.url),
+                        mark: app.mark(for: file),
+                        showsVolume: app.crossCardMode
+                    )
+                    .equatable()
+                    .background(frameReporter(file.url))
                 }
             }
             .padding()
@@ -31,6 +40,10 @@ struct ThumbnailGridView: View {
             .overlay(marqueeRectangle)
             .coordinateSpace(name: gridSpace)
             .onPreferenceChange(ItemFrameKey.self) { itemFrames = $0 }
+            // Frames accumulate as cells are realized and are never removed by
+            // the preference merge, so drop the whole map whenever the backing
+            // list changes rather than letting it grow for the session.
+            .onChange(of: app.displayedFiles.count) { itemFrames = [:] }
         }
         .safeAreaInset(edge: .top, spacing: 0) {
             if app.browseSelection != nil && !app.files.isEmpty {

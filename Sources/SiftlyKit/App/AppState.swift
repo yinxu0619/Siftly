@@ -55,7 +55,12 @@ public final class AppState: ObservableObject {
     @Published public private(set) var volumes: [Volume] = []
     /// Either a volume id, `allCardsTag`, or nil.
     @Published public var browseSelection: String?
-    @Published public private(set) var files: [MediaFile] = []
+    @Published public private(set) var files: [MediaFile] = [] {
+        didSet { rebuildFileIndex(); recomputeDisplayed() }
+    }
+    /// `files` keyed by URL, so preview/editor/deletion lookups are O(1)
+    /// instead of a linear scan on every SwiftUI body evaluation.
+    private var filesByURL: [URL: MediaFile] = [:]
     @Published public var selection: Set<URL> = []
     @Published public var currentFileURL: URL?
     /// File currently shown in the full-size preview viewer (nil = closed).
@@ -69,21 +74,28 @@ public final class AppState: ObservableObject {
     /// Drives the "关于 / 赞助" sheet.
     @Published public var isShowingAbout = false
     @Published public var pairingRule: PairingRule = .default
-    @Published public private(set) var pairing: PairingResult = .empty
+    @Published public private(set) var pairing: PairingResult = .empty {
+        didSet { recomputeDisplayed() }
+    }
 
     // Filter / sort / search state for the grid.
-    @Published public var searchText: String = ""
-    @Published public var formatFilter: FormatFilter = .all
-    @Published public var minRating: Int = 0
-    @Published public var labelFilter: ColorLabel?
-    @Published public var sortKey: SortKey = .date
-    @Published public var sortAscending: Bool = false
+    @Published public var searchText: String = "" { didSet { recomputeDisplayed() } }
+    @Published public var formatFilter: FormatFilter = .all { didSet { recomputeDisplayed() } }
+    @Published public var minRating: Int = 0 { didSet { recomputeDisplayed() } }
+    @Published public var labelFilter: ColorLabel? { didSet { recomputeDisplayed() } }
+    @Published public var sortKey: SortKey = .date { didSet { recomputeDisplayed() } }
+    @Published public var sortAscending: Bool = false { didSet { recomputeDisplayed() } }
     @Published public private(set) var isScanning = false
     @Published public var statusMessage: String = L10n.Status.noCards
     /// User-facing error, surfaced as an alert. Cleared when dismissed.
     @Published public var errorMessage: String?
     /// Marks keyed by `volumeID::relativePath`, mirrored for SwiftUI updates.
-    @Published public private(set) var marks: [String: FileMark] = [:]
+    @Published public private(set) var marks: [String: FileMark] = [:] {
+        didSet {
+            // Only rating/label filters read marks; skip the rebuild otherwise.
+            if minRating > 0 || labelFilter != nil { recomputeDisplayed() }
+        }
+    }
 
     /// In-flight scan, validated by a token so stale results never repopulate.
     private var scanTask: Task<Void, Never>?
@@ -97,8 +109,14 @@ public final class AppState: ObservableObject {
         deletionTotal == 0 ? 0 : Double(deletionDone) / Double(deletionTotal)
     }
 
-    // Undo support for the most recent deletion.
-    private struct DeletedItem { let original: URL; let trashed: URL? }
+    // Undo support for the most recent deletion. The file's mark travels with
+    // it: deletion prunes the mark index, so undo has to be able to put it back.
+    private struct DeletedItem {
+        let original: URL
+        let trashed: URL?
+        let markKey: String?
+        let mark: FileMark?
+    }
     private var lastDeletedItems: [DeletedItem] = []
     @Published public private(set) var canUndo = false
 
@@ -163,7 +181,7 @@ public final class AppState: ObservableObject {
         let n = previewPrefetchCount
         guard n > 0 else { return }
         let list = displayedFiles
-        guard let idx = list.firstIndex(where: { $0.url == url }) else { return }
+        guard let idx = displayedIndex[url] else { return }
         var urls: [URL] = []
         for step in 1...n {
             if idx + step < list.count { urls.append(list[idx + step].url) }
@@ -191,6 +209,7 @@ public final class AppState: ObservableObject {
 
     public func refreshVolumes() {
         let current = volumeService.currentRemovableVolumes()
+        let changed = current.map(\.id) != volumes.map(\.id)
         volumes = current
 
         if crossCardMode {
@@ -198,8 +217,11 @@ public final class AppState: ObservableObject {
                 scanTask?.cancel()
                 resetBrowseState(message: L10n.Status.noCards)
                 browseSelection = nil
-            } else {
-                // Re-merge across the (possibly changed) set of cards.
+            } else if changed {
+                // Re-merge across the (changed) set of cards. Guarded on an
+                // actual change: mount/unmount/rename notifications also fire
+                // for unrelated volumes (disk images, backups), and restarting
+                // the scan for those would throw away an in-progress one.
                 rescanCurrentScope()
             }
             return
@@ -277,11 +299,19 @@ public final class AppState: ObservableObject {
         scanTask = Task { [weak self] in
             // Stream batches (off-main) from each target volume, stamping the
             // owning volume so cross-card pairing and mark keys work.
+            // `abandoned` lets the producer bail out of the directory walk. The
+            // detached task is not a child of `scanTask`, so cancelling the
+            // consumer alone would leave it enumerating the rest of the card
+            // (potentially 100k+ files) into an unbounded stream buffer.
+            let abandoned = ScanFlag()
             let stream = AsyncThrowingStream<[MediaFile], Error> { continuation in
+                continuation.onTermination = { _ in abandoned.cancel() }
                 Task.detached(priority: .userInitiated) {
                     do {
                         for vol in vols {
+                            if abandoned.isCancelled { break }
                             try fs.scanMediaFiles(in: vol.url, extensions: extensions, batchSize: 256) { batch in
+                                if abandoned.isCancelled { return false }
                                 let stamped = batch.map { file -> MediaFile in
                                     var m = file
                                     m.volumeID = vol.id
@@ -290,6 +320,7 @@ public final class AppState: ObservableObject {
                                     return m
                                 }
                                 continuation.yield(stamped)
+                                return true
                             }
                         }
                         continuation.finish()
@@ -370,12 +401,11 @@ public final class AppState: ObservableObject {
     /// current anchor and `url`. With `additive` (Shift+⌘) the range is added to
     /// the existing selection; otherwise it replaces it.
     public func selectRange(to url: URL, additive: Bool) {
-        let list = displayedFiles.map(\.url)
-        guard let target = list.firstIndex(of: url) else { return }
+        guard let target = displayedIndex[url] else { return }
         let anchorURL = selectionAnchor ?? currentFileURL
-        let anchor = anchorURL.flatMap { list.firstIndex(of: $0) } ?? target
+        let anchor = anchorURL.flatMap { displayedIndex[$0] } ?? target
         let lo = min(anchor, target), hi = max(anchor, target)
-        let range = Set(list[lo...hi])
+        let range = Set(displayedFiles[lo...hi].map(\.url))
         selection = additive ? selection.union(range) : range
         currentFileURL = url
     }
@@ -389,7 +419,25 @@ public final class AppState: ObservableObject {
 
     /// Files after applying search / filter / sort. Drives the grid and the
     /// preview navigation order.
-    public var displayedFiles: [MediaFile] {
+    ///
+    /// Cached rather than computed: SwiftUI reads this many times per body
+    /// evaluation (the grid alone touches it five times), and the preview viewer
+    /// re-evaluates on every pan/zoom frame. Recomputing meant a full filter +
+    /// `localizedStandardCompare` sort of the whole card dozens of times per
+    /// second. It is now rebuilt only when an input actually changes.
+    @Published public private(set) var displayedFiles: [MediaFile] = []
+
+    /// Position of each displayed file, for O(1) navigation lookups.
+    private var displayedIndex: [URL: Int] = [:]
+
+    /// Index of `url` in the displayed order, or nil when it is filtered out.
+    public func displayedPosition(of url: URL) -> Int? { displayedIndex[url] }
+
+    private func rebuildFileIndex() {
+        filesByURL = Dictionary(files.map { ($0.url, $0) }, uniquingKeysWith: { _, b in b })
+    }
+
+    private func recomputeDisplayed() {
         var result = files
 
         if !searchText.isEmpty {
@@ -412,22 +460,34 @@ public final class AppState: ObservableObject {
             result = result.filter { mark(for: $0).label == label }
         }
 
-        result.sort { lhs, rhs in
-            switch sortKey {
-            case .date:
-                let l = lhs.modificationDate ?? .distantPast
-                let r = rhs.modificationDate ?? .distantPast
-                return sortAscending ? l < r : l > r
-            case .name:
-                let order = lhs.name.localizedStandardCompare(rhs.name)
-                return sortAscending ? order == .orderedAscending : order == .orderedDescending
-            case .size:
-                let l = lhs.fileSize ?? 0
-                let r = rhs.fileSize ?? 0
-                return sortAscending ? l < r : l > r
+        switch sortKey {
+        case .date:
+            let ascending = sortAscending
+            result.sort {
+                let l = $0.modificationDate ?? .distantPast
+                let r = $1.modificationDate ?? .distantPast
+                return ascending ? l < r : l > r
+            }
+        case .name:
+            let ascending = sortAscending
+            result.sort {
+                let order = $0.name.localizedStandardCompare($1.name)
+                return ascending ? order == .orderedAscending : order == .orderedDescending
+            }
+        case .size:
+            let ascending = sortAscending
+            result.sort {
+                let l = $0.fileSize ?? 0
+                let r = $1.fileSize ?? 0
+                return ascending ? l < r : l > r
             }
         }
-        return result
+
+        var index: [URL: Int] = [:]
+        index.reserveCapacity(result.count)
+        for (position, file) in result.enumerated() { index[file.url] = position }
+        displayedIndex = index
+        displayedFiles = result
     }
 
     public var hasActiveFilter: Bool {
@@ -458,7 +518,7 @@ public final class AppState: ObservableObject {
 
     public var previewFile: MediaFile? {
         guard let url = previewURL else { return nil }
-        return files.first { $0.url == url }
+        return filesByURL[url]
     }
 
     public func openPreview(_ url: URL) {
@@ -472,13 +532,11 @@ public final class AppState: ObservableObject {
 
     /// Moves the preview by `delta` (e.g. -1 / +1) within the displayed order.
     public func previewStep(_ delta: Int) {
-        let list = displayedFiles
-        guard let url = previewURL,
-              let index = list.firstIndex(where: { $0.url == url }) else { return }
+        guard let url = previewURL, let index = displayedIndex[url] else { return }
         let next = index + delta
-        guard list.indices.contains(next) else { return }
-        previewURL = list[next].url
-        currentFileURL = list[next].url
+        guard displayedFiles.indices.contains(next) else { return }
+        previewURL = displayedFiles[next].url
+        currentFileURL = displayedFiles[next].url
     }
 
     private func nextPreviewURL(after url: URL, in oldFiles: [MediaFile], deleted: Set<URL>) -> URL? {
@@ -500,7 +558,7 @@ public final class AppState: ObservableObject {
 
     public var editorFile: MediaFile? {
         guard let url = editorURL else { return nil }
-        return files.first { $0.url == url }
+        return filesByURL[url]
     }
 
     public func openEditor(_ url: URL) {
@@ -557,7 +615,7 @@ public final class AppState: ObservableObject {
     /// grid and recompute pairing so it appears immediately.
     private func ingestExported(_ url: URL) {
         guard let volume = targetVolumes.first(where: { url.path.hasPrefix($0.url.path) }),
-              !files.contains(where: { $0.url == url }) else { return }
+              filesByURL[url] == nil else { return }
         let values = try? url.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey])
         var file = MediaFile(
             url: url,
@@ -622,7 +680,7 @@ public final class AppState: ObservableObject {
     }
 
     public func planDeletion(for urls: Set<URL>) -> DeletionPlan {
-        DeletionPlanner.plan(for: urls, pairing: pairing, allFiles: files)
+        DeletionPlanner.plan(for: urls, pairing: pairing, filesByURL: filesByURL)
     }
 
     /// Sets up and opens the delete confirmation for a context-menu/preview
@@ -687,14 +745,37 @@ public final class AppState: ObservableObject {
 
             for (original, trashed) in result.0 {
                 deleted.insert(original)
-                deletedItems.append(DeletedItem(original: original, trashed: trashed))
+                let key = filesByURL[original].flatMap(markKey(for:))
+                deletedItems.append(
+                    DeletedItem(
+                        original: original,
+                        trashed: trashed,
+                        markKey: key,
+                        mark: key.flatMap { marks[$0] }
+                    )
+                )
             }
             failures.append(contentsOf: result.1)
             deletionDone = deleted.count + failures.count
         }
 
         let oldDisplayed = displayedFiles
+        // Drop the persisted ratings/labels of the removed files. Cameras reuse
+        // file names after a counter reset, so a stale mark would otherwise
+        // reattach itself to an unrelated photo later on. Undo restores them
+        // (they are carried on `DeletedItem`).
+        //
+        // Only keys that actually carry a mark: otherwise every deletion would
+        // copy and republish the whole index — and, with a rating/label filter
+        // active, trigger a pointless full re-sort.
+        let staleKeys = deletedItems.compactMap(\.markKey).filter { marks[$0] != nil }
         files.removeAll { deleted.contains($0.url) }
+        if !staleKeys.isEmpty {
+            var remaining = marks
+            for key in staleKeys { remaining.removeValue(forKey: key) }
+            marks = remaining        // one publish, not one per file
+            library.removeMarks(forKeys: staleKeys)
+        }
         selection.removeAll()
         if let current = currentFileURL, deleted.contains(current) {
             currentFileURL = nil
@@ -736,14 +817,23 @@ public final class AppState: ObservableObject {
 
         var restored = 0
         var failed = 0
+        var revivedMarks: [String: FileMark] = [:]
         for item in items {
             guard let trashed = item.trashed else { failed += 1; continue }
             do {
                 try trash.restoreItem(at: trashed, to: item.original)
                 restored += 1
+                // Put the file's rating/label back too — deletion pruned it.
+                if let key = item.markKey, let mark = item.mark, !mark.isEmpty {
+                    revivedMarks[key] = mark
+                }
             } catch {
                 failed += 1
             }
+        }
+        if !revivedMarks.isEmpty {
+            library.setMarks(revivedMarks)
+            marks.merge(revivedMarks) { _, new in new }
         }
 
         statusMessage = L10n.Status.restored(restored)
@@ -766,30 +856,48 @@ public final class AppState: ObservableObject {
     }
 
     public func setRating(_ rating: Rating, for file: MediaFile) {
-        guard let key = markKey(for: file) else { return }
-        var m = mark(for: file)
-        m.rating = rating
-        library.setMark(m, forKey: key)
-        marks[key] = m
+        updateMark(for: file) { $0.rating = rating }
     }
 
     public func setLabel(_ label: ColorLabel, for file: MediaFile) {
+        updateMark(for: file) { $0.label = label }
+    }
+
+    private func updateMark(for file: MediaFile, _ edit: (inout FileMark) -> Void) {
         guard let key = markKey(for: file) else { return }
         var m = mark(for: file)
-        m.label = label
+        edit(&m)
         library.setMark(m, forKey: key)
-        marks[key] = m
+        if m.isEmpty { marks.removeValue(forKey: key) } else { marks[key] = m }
     }
 
     public func setRatingForSelection(_ rating: Rating) {
-        for file in files where selection.contains(file.url) {
-            setRating(rating, for: file)
-        }
+        applyToSelection { $0.rating = rating }
     }
 
     public func setLabelForSelection(_ label: ColorLabel) {
-        for file in files where selection.contains(file.url) {
-            setLabel(label, for: file)
+        applyToSelection { $0.label = label }
+    }
+
+    /// Applies a mark edit across the selection with a single index write.
+    /// Doing this per file would re-encode and re-write the whole mark index
+    /// once per photo — hundreds of full disk writes for one batch command.
+    private func applyToSelection(_ edit: (inout FileMark) -> Void) {
+        var updates: [String: FileMark] = [:]
+        for url in selection {
+            guard let file = filesByURL[url], let key = markKey(for: file) else { continue }
+            var m = mark(for: file)
+            edit(&m)
+            updates[key] = m
         }
+        guard !updates.isEmpty else { return }
+        library.setMarks(updates)
+        var merged = marks
+        for (key, m) in updates {
+            // Clearing a rating/label drops the entry rather than storing an
+            // empty mark, matching what the store persists.
+            if m.isEmpty { merged.removeValue(forKey: key) } else { merged[key] = m }
+        }
+        marks = merged
     }
 }

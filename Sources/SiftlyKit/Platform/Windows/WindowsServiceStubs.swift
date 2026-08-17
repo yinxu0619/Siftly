@@ -28,7 +28,7 @@ public final class WindowsFileSystemService: FileSystemService {
         in directory: URL,
         extensions: Set<String>,
         batchSize: Int,
-        onBatch: ([MediaFile]) -> Void
+        onBatch: ([MediaFile]) -> Bool
     ) throws {
         // TODO(windows): port directory enumeration (Foundation FileManager is
         // mostly portable on Swift for Windows; emit batches via onBatch).

@@ -30,7 +30,12 @@ public final class LibraryStore {
     }
 
     public static func key(volumeID: String, fileURL: URL, volumeURL: URL) -> String {
-        let relative = fileURL.path.replacingOccurrences(of: volumeURL.path, with: "")
+        // Strip the volume mount point as a *prefix* only. (Using
+        // `replacingOccurrences` here would also rewrite matches deeper in the
+        // path, producing a key that collides with unrelated files.)
+        let path = fileURL.path
+        let prefix = volumeURL.path
+        let relative = path.hasPrefix(prefix) ? String(path.dropFirst(prefix.count)) : path
         return "\(volumeID)::\(relative)"
     }
 
@@ -39,12 +44,34 @@ public final class LibraryStore {
     }
 
     public func setMark(_ mark: FileMark, forKey key: String) {
+        apply(mark, forKey: key)
+        save()
+    }
+
+    /// Batch variant: applies many marks with a single encode + disk write.
+    /// Used by the "rate/label the whole selection" commands, which would
+    /// otherwise rewrite the entire index once per file.
+    public func setMarks(_ updates: [String: FileMark]) {
+        guard !updates.isEmpty else { return }
+        for (key, mark) in updates { apply(mark, forKey: key) }
+        save()
+    }
+
+    /// Drops marks for files that no longer exist (e.g. after a deletion), so
+    /// the index doesn't grow without bound and stale ratings can't reattach to
+    /// a later file that happens to reuse the same name.
+    public func removeMarks(forKeys keys: [String]) {
+        var changed = false
+        for key in keys where marks.removeValue(forKey: key) != nil { changed = true }
+        if changed { save() }
+    }
+
+    private func apply(_ mark: FileMark, forKey key: String) {
         if mark.isEmpty {
             marks.removeValue(forKey: key)
         } else {
             marks[key] = mark
         }
-        save()
     }
 
     private func load() {

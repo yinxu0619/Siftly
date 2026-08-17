@@ -16,7 +16,7 @@ public final class MacFileSystemService: FileSystemService {
         in directory: URL,
         extensions: Set<String>,
         batchSize: Int,
-        onBatch: ([MediaFile]) -> Void
+        onBatch: ([MediaFile]) -> Bool
     ) throws {
         let fm = FileManager.default
         guard let enumerator = fm.enumerator(
@@ -28,14 +28,18 @@ public final class MacFileSystemService: FileSystemService {
         }
 
         let effectiveBatch = max(1, batchSize)
+        let keys = Set(resourceKeys)
         var batch: [MediaFile] = []
         if effectiveBatch != Int.max { batch.reserveCapacity(effectiveBatch) }
 
         for case let url as URL in enumerator {
-            let values = try? url.resourceValues(forKeys: Set(resourceKeys))
-            guard values?.isRegularFile == true else { continue }
+            // Filter on the extension *before* touching the file system. Cards
+            // carry a lot of sidecar noise (.THM/.XML/.CTG); reading resource
+            // values for those is pure overhead.
             let ext = url.pathExtension.lowercased()
             if !extensions.isEmpty && !extensions.contains(ext) { continue }
+            let values = try? url.resourceValues(forKeys: keys)
+            guard values?.isRegularFile == true else { continue }
             batch.append(
                 MediaFile(
                     url: url,
@@ -44,12 +48,12 @@ public final class MacFileSystemService: FileSystemService {
                 )
             )
             if batch.count >= effectiveBatch {
-                onBatch(batch)
+                if !onBatch(batch) { return }
                 batch.removeAll(keepingCapacity: true)
             }
         }
         if !batch.isEmpty {
-            onBatch(batch)
+            _ = onBatch(batch)
         }
     }
 }

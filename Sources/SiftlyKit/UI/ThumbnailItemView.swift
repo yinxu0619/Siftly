@@ -3,16 +3,42 @@ import SwiftUI
 import AppKit
 #endif
 
-struct ThumbnailItemView: View {
-    @EnvironmentObject private var app: AppState
+/// Identity of a thumbnail load, used as the `.task(id:)` key.
+struct ThumbnailRequest: Hashable {
+    let url: URL
+    let bucket: CGFloat
+}
+
+/// One grid cell.
+///
+/// Deliberately *not* an `@EnvironmentObject` observer: subscribing to `AppState`
+/// would invalidate every visible cell on any state change at all — the scan's
+/// per-batch `statusMessage` updates, deletion progress ticks, every frame of a
+/// marquee drag. Instead the parent passes the handful of values a cell renders,
+/// and `Equatable` lets SwiftUI skip cells whose inputs didn't move. `app` is
+/// held as a plain reference for actions only.
+struct ThumbnailItemView: View, Equatable {
+    let app: AppState
     let file: MediaFile
     let size: CGFloat
+    let isSelected: Bool
+    let isPaired: Bool
+    let mark: FileMark
+    let showsVolume: Bool
 
     @State private var image: NSImage?
 
-    private var isSelected: Bool { app.selection.contains(file.url) }
-    private var isPaired: Bool { app.pairing.isPaired(file.url) }
-    private var mark: FileMark { app.mark(for: file) }
+    static func == (lhs: ThumbnailItemView, rhs: ThumbnailItemView) -> Bool {
+        lhs.app === rhs.app
+            && lhs.file.url == rhs.file.url
+            && lhs.file.name == rhs.file.name
+            && lhs.file.volumeName == rhs.file.volumeName
+            && lhs.size == rhs.size
+            && lhs.isSelected == rhs.isSelected
+            && lhs.isPaired == rhs.isPaired
+            && lhs.mark == rhs.mark
+            && lhs.showsVolume == rhs.showsVolume
+    }
 
     var body: some View {
         VStack(spacing: 4) {
@@ -44,7 +70,7 @@ struct ThumbnailItemView: View {
                 .truncationMode(.middle)
                 .frame(width: size)
 
-            if app.crossCardMode, let volumeName = file.volumeName {
+            if showsVolume, let volumeName = file.volumeName {
                 Label(volumeName, systemImage: "sdcard")
                     .font(.system(size: 9))
                     .foregroundStyle(.secondary)
@@ -65,13 +91,20 @@ struct ThumbnailItemView: View {
             }
         }
         .contextMenu { contextMenu }
-        .task(id: file.url) {
-            image = await app.thumbnails.image(
-                for: file.url,
-                size: CGSize(width: size * 2, height: size * 2)
-            )
+        // Keyed on the *bucket*, not the raw slider value, so dragging the size
+        // slider only re-decodes when it actually crosses a resolution step —
+        // and, unlike keying on the URL alone, growing past a step does refresh
+        // the image instead of leaving a stale low-res one on screen.
+        .task(id: ThumbnailRequest(url: file.url, bucket: bucket)) {
+            image = app.thumbnails.cachedImage(for: file.url, bucket: bucket)
+                ?? app.thumbnails.anyCachedImage(for: file.url)
+            if let loaded = await app.thumbnails.image(for: file.url, bucket: bucket) {
+                image = loaded
+            }
         }
     }
+
+    private var bucket: CGFloat { ThumbnailProvider.bucket(forPoints: size) }
 
     @ViewBuilder
     private var contextMenu: some View {

@@ -31,7 +31,16 @@ public enum DeletionPlanner {
     ) -> DeletionPlan {
         var byURL: [URL: MediaFile] = [:]
         for file in allFiles { byURL[file.url] = file }
+        return plan(for: selected, pairing: pairing, filesByURL: byURL)
+    }
 
+    /// Variant for callers that already keep a URL index of the loaded files,
+    /// avoiding a full rebuild of the lookup table on every plan.
+    public static func plan(
+        for selected: Set<URL>,
+        pairing: PairingResult,
+        filesByURL byURL: [URL: MediaFile]
+    ) -> DeletionPlan {
         var fullSet = Set<URL>()
         for url in selected {
             fullSet.insert(url)

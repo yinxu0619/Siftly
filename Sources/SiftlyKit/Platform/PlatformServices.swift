@@ -24,11 +24,15 @@ public protocol FileSystemService: AnyObject {
     /// Streaming enumeration. `onBatch` is invoked repeatedly with chunks of up
     /// to `batchSize` files so the UI can render incrementally and memory stays
     /// bounded on very large cards. Runs on the calling (background) thread.
+    ///
+    /// Return `false` from `onBatch` to stop the walk early. Cards can hold
+    /// 100k+ files, so an abandoned scan (card ejected, user switched cards)
+    /// must be able to bail out instead of enumerating to the end.
     func scanMediaFiles(
         in directory: URL,
         extensions: Set<String>,
         batchSize: Int,
-        onBatch: ([MediaFile]) -> Void
+        onBatch: ([MediaFile]) -> Bool
     ) throws
 }
 
@@ -37,6 +41,7 @@ public extension FileSystemService {
         var all: [MediaFile] = []
         try scanMediaFiles(in: directory, extensions: extensions, batchSize: Int.max) { batch in
             all.append(contentsOf: batch)
+            return true
         }
         return all
     }

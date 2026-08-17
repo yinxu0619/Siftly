@@ -33,13 +33,32 @@ final class FileScannerTests: XCTestCase {
             in: tempDir,
             extensions: ["arw", "jpg"],
             batchSize: 4
-        ) { batches.append($0) }
+        ) { batches.append($0); return true }
 
         let all = batches.flatMap { $0 }
         XCTAssertEqual(all.count, 20)
         XCTAssertFalse(all.contains { $0.ext == "txt" })
         XCTAssertGreaterThan(batches.count, 1, "expected multiple batches")
         XCTAssertTrue(batches.dropLast().allSatisfy { $0.count == 4 })
+    }
+
+    /// Returning false must abandon the walk immediately — that's what lets an
+    /// ejected/switched card stop a scan instead of enumerating to the end.
+    func testOnBatchCanStopTheWalkEarly() throws {
+        for i in 0..<40 { try touch(String(format: "DSC%03d.ARW", i)) }
+
+        let service = MacFileSystemService()
+        var batches = 0
+        try service.scanMediaFiles(
+            in: tempDir,
+            extensions: ["arw"],
+            batchSize: 4
+        ) { _ in
+            batches += 1
+            return batches < 2
+        }
+
+        XCTAssertEqual(batches, 2, "walk should stop at the batch that returned false")
     }
 
     func testConvenienceEnumerateReturnsAll() throws {
