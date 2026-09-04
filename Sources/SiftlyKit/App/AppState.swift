@@ -9,13 +9,14 @@ import AppKit
 /// disk scanning, pairing, and user marks. UI observes this object.
 /// Filter for the grid by file kind / pairing state.
 public enum FormatFilter: String, CaseIterable, Identifiable {
-    case all, raw, jpg, paired, unpaired
+    case all, raw, jpg, video, paired, unpaired
     public var id: String { rawValue }
     public var title: String {
         switch self {
         case .all: return L10n.formatAll
         case .raw: return L10n.formatRAW
         case .jpg: return L10n.formatJPG
+        case .video: return L10n.formatVideo
         case .paired: return L10n.formatPaired
         case .unpaired: return L10n.formatUnpaired
         }
@@ -132,6 +133,15 @@ public final class AppState: ObservableObject {
         }
     }
 
+    private static let xmpKey = "siftly.writeXMPSidecars"
+    /// When on, every rating/label change also writes an Adobe-style `.xmp`
+    /// sidecar next to the original, so a cull can be handed to Lightroom /
+    /// Capture One. Off by default: it writes to the user's card, which may be
+    /// full or read-only, and Siftly's own index works without it.
+    @Published public var writesXMPSidecars: Bool {
+        didSet { UserDefaults.standard.set(writesXMPSidecars, forKey: Self.xmpKey) }
+    }
+
     private static let languageKey = "siftly.languageOverride"
     /// Selected interface language: `nil` (or "system") follows the OS; otherwise
     /// a locale identifier like "en" or "zh-Hans".
@@ -145,12 +155,28 @@ public final class AppState: ObservableObject {
     /// Locales the UI offers an explicit choice for (besides "follow system").
     public static let supportedLanguages: [String] = ["en", "zh-Hans"]
 
-    /// Pixel size used for the full-size preview (and its prefetch cache).
-    public static let previewPixelSize = CGSize(width: 2600, height: 2600)
+    /// Size requested for the full-size preview, in **points** — the unit
+    /// `ThumbnailService` takes, since it applies the Retina scale itself.
+    /// Passing pixels here silently doubled the request: a "2600px" preview was
+    /// decoding at 5200x5200, about 108 MB per image.
+    ///
+    /// Derived from the actual display rather than a constant, so a laptop
+    /// doesn't pay for a 6K panel and a 6K panel isn't served a soft preview.
+    /// The 1.3x margin leaves some headroom for moderate zoom.
+    public static var previewPointSize: CGSize {
+        #if canImport(AppKit)
+        let longestEdge = NSScreen.main.map { max($0.frame.width, $0.frame.height) } ?? 1600
+        let points = min(max(longestEdge * 1.3, 1200), 2200)
+        return CGSize(width: points, height: points)
+        #else
+        return CGSize(width: 1600, height: 1600)
+        #endif
+    }
 
     public init() {
         let storedPrefetch = UserDefaults.standard.object(forKey: Self.prefetchKey) as? Int
         self.previewPrefetchCount = storedPrefetch ?? 3
+        self.writesXMPSidecars = UserDefaults.standard.bool(forKey: Self.xmpKey)
         let storedLanguage = UserDefaults.standard.string(forKey: Self.languageKey)
         self.languageOverride = storedLanguage
         L10n.overrideLocaleIdentifier = storedLanguage
@@ -187,7 +213,7 @@ public final class AppState: ObservableObject {
             if idx + step < list.count { urls.append(list[idx + step].url) }
             if idx - step >= 0 { urls.append(list[idx - step].url) }
         }
-        thumbnails.prefetchPreviews(urls, pixelSize: Self.previewPixelSize)
+        thumbnails.prefetchPreviews(urls, pointSize: Self.previewPointSize)
     }
 
     /// True when browsing/merging all cards (enables cross-card pairing).
@@ -196,6 +222,13 @@ public final class AppState: ObservableObject {
     public var selectedVolume: Volume? {
         guard let id = browseSelection, id != Self.allCardsTag else { return nil }
         return volumes.first { $0.id == id }
+    }
+
+    /// True when the delete target lives on a removable card, where the Trash
+    /// is a folder *on the card* and so frees no space until it is emptied.
+    public var selectedVolumeIsRemovable: Bool {
+        if crossCardMode { return volumes.contains { $0.isRemovable } }
+        return selectedVolume?.isRemovable ?? false
     }
 
     /// Volumes that the current browse scope targets.
@@ -291,7 +324,7 @@ public final class AppState: ObservableObject {
 
         var rule = pairingRule
         rule.crossLocation = crossCardMode
-        let extensions = rule.allExtensions.union(MediaCatalog.imageExtensions)
+        let extensions = rule.allExtensions.union(MediaCatalog.allMediaExtensions)
         let fs = fileSystem
         let scopeName = crossCardMode ? L10n.allStorageCards : (vols.first?.name ?? "")
         statusMessage = L10n.Status.scanning(scopeName)
@@ -433,6 +466,10 @@ public final class AppState: ObservableObject {
     /// Index of `url` in the displayed order, or nil when it is filtered out.
     public func displayedPosition(of url: URL) -> Int? { displayedIndex[url] }
 
+    /// The loaded file for `url`, in O(1). Views call this on every body
+    /// evaluation, so it must not scan `files`.
+    public func file(for url: URL) -> MediaFile? { filesByURL[url] }
+
     private func rebuildFileIndex() {
         filesByURL = Dictionary(files.map { ($0.url, $0) }, uniquingKeysWith: { _, b in b })
     }
@@ -449,6 +486,7 @@ public final class AppState: ObservableObject {
         case .all: break
         case .raw: result = result.filter { $0.isRAW }
         case .jpg: result = result.filter { MediaCatalog.jpegExtensions.contains($0.ext) }
+        case .video: result = result.filter { $0.isVideo }
         case .paired: result = result.filter { pairing.isPaired($0.url) }
         case .unpaired: result = result.filter { !pairing.isPaired($0.url) }
         }
@@ -863,12 +901,89 @@ public final class AppState: ObservableObject {
         updateMark(for: file) { $0.label = label }
     }
 
+    /// The saved editor state for a file, or identity when it has never been
+    /// edited.
+    public func adjustments(for file: MediaFile) -> ImageAdjustments {
+        mark(for: file).adjustments ?? .identity
+    }
+
+    /// Persists (or clears) the non-destructive edit for a file.
+    public func setAdjustments(_ adjustments: ImageAdjustments, for file: MediaFile) {
+        updateMark(for: file) { $0.adjustments = adjustments.isIdentity ? nil : adjustments }
+    }
+
     private func updateMark(for file: MediaFile, _ edit: (inout FileMark) -> Void) {
         guard let key = markKey(for: file) else { return }
         var m = mark(for: file)
         edit(&m)
         library.setMark(m, forKey: key)
         if m.isEmpty { marks.removeValue(forKey: key) } else { marks[key] = m }
+        writeSidecar(m, for: file.url)
+    }
+
+    /// Mirrors a mark into an XMP sidecar when the preference is on. Fire and
+    /// forget off the main actor: the card can be slow, and a sidecar failure
+    /// must never block or fail the in-app mark.
+    private func writeSidecar(_ mark: FileMark, for url: URL) {
+        guard writesXMPSidecars else { return }
+        Task.detached(priority: .utility) {
+            try? XMPSidecar.write(mark, for: url)
+        }
+    }
+
+    /// Reads XMP sidecars for every loaded file and adopts any rating/label
+    /// found. Explicit rather than automatic: doing it during a scan would add
+    /// a stat plus a parse per file to the slowest part of the app.
+    /// Existing Siftly marks win, so this never overwrites local work.
+    public func importXMPSidecars() async {
+        let candidates = files.filter { mark(for: $0).isEmpty }
+        guard !candidates.isEmpty else {
+            statusMessage = L10n.Status.xmpImported(0)
+            return
+        }
+        let urls = candidates.map(\.url)
+        let found = await Task.detached(priority: .userInitiated) { () -> [URL: FileMark] in
+            var result: [URL: FileMark] = [:]
+            for url in urls {
+                if let mark = XMPSidecar.read(for: url) { result[url] = mark }
+            }
+            return result
+        }.value
+
+        var updates: [String: FileMark] = [:]
+        for (url, mark) in found {
+            guard let file = filesByURL[url], let key = markKey(for: file) else { continue }
+            updates[key] = mark
+        }
+        if !updates.isEmpty {
+            library.setMarks(updates)
+            marks.merge(updates) { _, new in new }
+        }
+        statusMessage = L10n.Status.xmpImported(updates.count)
+    }
+
+    /// Writes sidecars for every currently marked file in one pass, so an
+    /// existing cull can be exported without re-touching each photo.
+    public func exportAllXMPSidecars() async {
+        let marked = files.compactMap { file -> (URL, FileMark)? in
+            let m = mark(for: file)
+            return m.isEmpty ? nil : (file.url, m)
+        }
+        guard !marked.isEmpty else {
+            statusMessage = L10n.Status.xmpExported(0)
+            return
+        }
+        let failures = await Task.detached(priority: .userInitiated) { () -> Int in
+            var failed = 0
+            for (url, mark) in marked {
+                do { try XMPSidecar.write(mark, for: url) } catch { failed += 1 }
+            }
+            return failed
+        }.value
+        statusMessage = L10n.Status.xmpExported(marked.count - failures)
+        if failures > 0 {
+            errorMessage = L10n.Error.xmpWriteFailed(failures)
+        }
     }
 
     public func setRatingForSelection(_ rating: Rating) {

@@ -30,10 +30,17 @@ public final class ImageProcessor: @unchecked Sendable {
     private let queue = DispatchQueue(label: "com.siftly.imageprocessor", qos: .userInitiated)
 
     private let lock = NSLock()
+    // Full-quality source, used for export and for reporting pixel size.
     private var sourceURL: URL?
     private var fullSource: CIImage?
+    // Preview source, cached separately so exporting doesn't evict it (and so
+    // the preview can be developed at reduced quality without affecting export).
+    private var previewURL: URL?
     private var previewBase: CIImage?
     private var previewDim: CGFloat = 0
+    /// Preview size relative to the full-resolution image, handed to the filter
+    /// chain so pixel-radius filters match what export will produce.
+    private var previewScale: Double = 1
 
     public init() {
         context = CIContext(options: [.useSoftwareRenderer: false])
@@ -53,8 +60,6 @@ public final class ImageProcessor: @unchecked Sendable {
         lock.lock()
         sourceURL = url
         fullSource = developed
-        previewBase = nil
-        previewDim = 0
         lock.unlock()
         return developed
     }
@@ -69,22 +74,54 @@ public final class ImageProcessor: @unchecked Sendable {
         return CIImage(contentsOf: url, options: [.applyOrientationProperty: true])
     }
 
-    /// A downscaled copy of the source for responsive live preview rendering.
-    private func base(for url: URL, maxDimension: CGFloat) -> CIImage? {
+    /// A downscaled copy of the source for responsive live preview rendering,
+    /// together with its scale relative to the full-resolution image.
+    private func base(for url: URL, maxDimension: CGFloat) -> (image: CIImage, scale: Double)? {
         lock.lock()
-        if sourceURL == url, let base = previewBase, previewDim == maxDimension {
-            lock.unlock(); return base
+        if previewURL == url, let base = previewBase, previewDim == maxDimension {
+            let scale = previewScale
+            lock.unlock(); return (base, scale)
         }
         lock.unlock()
 
-        guard let full = loadFullSource(url) else { return nil }
-        let scaled = Self.scaled(full, maxLongEdge: maxDimension)
+        guard let developed = Self.developPreview(url, maxDimension: maxDimension) else { return nil }
 
         lock.lock()
-        previewBase = scaled
+        previewURL = url
+        previewBase = developed.image
         previewDim = maxDimension
+        previewScale = developed.scale
         lock.unlock()
-        return scaled
+        return developed
+    }
+
+    /// Develops a preview-sized copy. RAW files are decoded *directly* at the
+    /// reduced scale with draft mode on, which is far cheaper than developing
+    /// the full frame and shrinking it afterwards — that decode is the pause
+    /// when opening the editor on a 45MP file. Export keeps using
+    /// `loadFullSource`, so it never inherits draft-mode quality.
+    private static func developPreview(_ url: URL, maxDimension: CGFloat) -> (image: CIImage, scale: Double)? {
+        let ext = url.pathExtension.lowercased()
+        if MediaCatalog.rawExtensions.contains(ext), let raw = CIRAWFilter(imageURL: url) {
+            // `outputImage.extent` reads the frame size from metadata; it does
+            // not force a decode, so this probe is cheap.
+            guard let probe = raw.outputImage else { return nil }
+            let longest = max(probe.extent.width, probe.extent.height)
+            var scale = 1.0
+            if longest > maxDimension, longest > 0 {
+                scale = Double(maxDimension / longest)
+                raw.scaleFactor = Float(scale)
+            }
+            raw.isDraftModeEnabled = true
+            guard let out = raw.outputImage else { return nil }
+            return (out, scale)
+        }
+        guard let image = CIImage(contentsOf: url, options: [.applyOrientationProperty: true]) else {
+            return nil
+        }
+        let longest = max(image.extent.width, image.extent.height)
+        guard longest > maxDimension, longest > 0 else { return (image, 1) }
+        return (Self.scaled(image, maxLongEdge: maxDimension), Double(maxDimension / longest))
     }
 
     private static func scaled(_ image: CIImage, maxLongEdge: CGFloat) -> CIImage {
@@ -187,7 +224,11 @@ public final class ImageProcessor: @unchecked Sendable {
         #if canImport(Vision)
         return await withCheckedContinuation { (cont: CheckedContinuation<Double?, Never>) in
             queue.async { [self] in
-                guard let src = loadFullSource(url) else { cont.resume(returning: nil); return }
+                // A downscaled frame is plenty for horizon detection and avoids
+                // developing the full RAW just to read an angle.
+                guard let src = base(for: url, maxDimension: 1600)?.image else {
+                    cont.resume(returning: nil); return
+                }
                 let request = VNDetectHorizonRequest()
                 let handler = VNImageRequestHandler(ciImage: src, options: [:])
                 do {
@@ -234,7 +275,7 @@ public final class ImageProcessor: @unchecked Sendable {
                 guard let base = base(for: url, maxDimension: maxDimension) else {
                     cont.resume(returning: nil); return
                 }
-                let colored = ImagePipeline.apply(adjustments, to: base)
+                let colored = ImagePipeline.apply(adjustments, to: base.image, renderScale: base.scale)
                 let output = Self.applyGeometry(colored, adjustments, includeCrop: includeCrop)
                 guard let cg = context.createCGImage(output, from: output.extent, format: .RGBA8, colorSpace: sRGB) else {
                     cont.resume(returning: nil); return
@@ -259,7 +300,7 @@ public final class ImageProcessor: @unchecked Sendable {
                 guard let full = loadFullSource(url) else {
                     cont.resume(throwing: ImageProcessingError.cannotLoadSource); return
                 }
-                let colored = ImagePipeline.apply(adjustments, to: full)
+                let colored = ImagePipeline.apply(adjustments, to: full, renderScale: 1)
                 var output = Self.applyGeometry(colored, adjustments, includeCrop: true)
                 if let maxEdge = settings.maxLongEdge {
                     output = Self.scaled(output, maxLongEdge: CGFloat(maxEdge))

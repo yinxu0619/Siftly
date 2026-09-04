@@ -94,4 +94,28 @@ final class PairingEngineTests: XCTestCase {
         XCTAssertEqual(cross.partners(of: arwCardB.url), [jpgCardA.url])
         XCTAssertEqual(cross.partners(of: jpgCardA.url), [arwCardB.url])
     }
+
+    /// Drones and action cams write the clip under the same base name as the
+    /// still, so culling the photo must take the clip with it.
+    func testUniversalRulePairsSameNamedVideo() {
+        let files = [
+            MediaFile(url: URL(fileURLWithPath: "/c/DCIM/DJI_0001.JPG")),
+            MediaFile(url: URL(fileURLWithPath: "/c/DCIM/DJI_0001.MP4"))
+        ]
+        let result = PairingEngine().computePairs(files, rule: .universal)
+        XCTAssertTrue(result.isPaired(files[0].url))
+        XCTAssertEqual(result.partners(of: files[0].url), [files[1].url])
+    }
+
+    /// Cameras that prefix clips differently (Canon IMG_ vs MVI_) must not be
+    /// affected by that change.
+    func testDifferentlyNamedVideoDoesNotPair() {
+        let files = [
+            MediaFile(url: URL(fileURLWithPath: "/c/DCIM/IMG_1234.CR3")),
+            MediaFile(url: URL(fileURLWithPath: "/c/DCIM/MVI_1234.MOV"))
+        ]
+        let result = PairingEngine().computePairs(files, rule: .universal)
+        XCTAssertFalse(result.isPaired(files[0].url))
+        XCTAssertFalse(result.isPaired(files[1].url))
+    }
 }

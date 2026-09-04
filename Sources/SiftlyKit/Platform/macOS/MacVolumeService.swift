@@ -45,6 +45,7 @@ public final class MacVolumeService: VolumeService {
             let id = Self.identity(
                 uuid: values.volumeUUIDString,
                 volumeCreationDate: values.volumeCreationDate,
+                contentCreationDate: Self.contentCreationDate(at: url),
                 mountPath: url.path
             )
             volumes.append(
@@ -65,24 +66,43 @@ public final class MacVolumeService: VolumeService {
     /// labels. Camera cards are usually exFAT/FAT32 and report no volume UUID,
     /// and they are almost always named "NO NAME" / "Untitled" — so falling back
     /// to the mount path alone would make every such card share one namespace
-    /// and inherit the previous card's marks. The volume creation date (set at
-    /// format time) disambiguates them.
+    /// and inherit the previous card's marks.
     ///
     /// The name is deliberately *not* part of the identity, so renaming a card
-    /// keeps its marks. A second-resolution format timestamp is specific enough
-    /// on its own.
+    /// keeps its marks.
     ///
-    /// NOTE: exFAT has no standard "volume created" field in its boot sector, so
-    /// whether macOS synthesizes one for a camera card is unverified — it needs
-    /// a real card to confirm. If it comes back nil we fall through to the mount
-    /// path (the old, colliding behaviour) and the fallback has to become the
-    /// exFAT volume serial number, read via DiskArbitration or the boot sector.
-    static func identity(uuid: String?, volumeCreationDate: Date?, mountPath: String) -> String {
+    /// Three chances before the colliding mount-path fallback, because whether
+    /// macOS synthesizes a volume creation date for exFAT is unverified (it
+    /// needs a real card to confirm):
+    ///   1. volume UUID — present on APFS/HFS+, absent on most camera cards
+    ///   2. volume creation date — set at format time
+    ///   3. content creation date — the DCIM directory, which on a camera card
+    ///      is a real exFAT directory entry with a real timestamp, or failing
+    ///      that the volume's root directory
+    static func identity(
+        uuid: String?,
+        volumeCreationDate: Date?,
+        contentCreationDate: Date?,
+        mountPath: String
+    ) -> String {
         if let uuid, !uuid.isEmpty { return uuid }
         if let created = volumeCreationDate {
             return "created-\(Int(created.timeIntervalSince1970))"
         }
+        if let created = contentCreationDate {
+            return "content-\(Int(created.timeIntervalSince1970))"
+        }
         return mountPath
+    }
+
+    /// Timestamp of the card's contents: the camera's DCIM folder when present,
+    /// otherwise the volume root.
+    private static func contentCreationDate(at volume: URL) -> Date? {
+        let dcim = volume.appendingPathComponent("DCIM", isDirectory: true)
+        if let date = (try? dcim.resourceValues(forKeys: [.creationDateKey]))?.creationDate {
+            return date
+        }
+        return (try? volume.resourceValues(forKeys: [.creationDateKey]))?.creationDate
     }
 
     public func startObserving(onChange: @escaping () -> Void) {

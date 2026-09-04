@@ -225,28 +225,31 @@ public final class ThumbnailProvider: ObservableObject {
 
     /// Large image for the full-size preview viewer. `prefetch` routes the load
     /// to the background lane so it can't hold up an interactive request.
+    ///
+    /// `pointSize` is in points, matching `ThumbnailService`, which applies the
+    /// Retina scale itself.
     public func previewImage(
         for url: URL,
-        pixelSize: CGSize,
+        pointSize: CGSize,
         prefetch: Bool = false
     ) async -> NSImage? {
         await load(
             key: Self.previewKey(url),
             cache: previewCache,
             gate: prefetch ? prefetchGate : previewGate,
-            decode: { [service] in await service.thumbnail(for: url, size: pixelSize) }
+            decode: { [service] in await service.thumbnail(for: url, size: pointSize) }
         )
     }
 
     /// Warms the preview cache for the given URLs in the background (used to
     /// preload the photos adjacent to the one currently being viewed).
-    public func prefetchPreviews(_ urls: [URL], pixelSize: CGSize) {
+    public func prefetchPreviews(_ urls: [URL], pointSize: CGSize) {
         for url in urls {
             let key = Self.previewKey(url)
             if previewCache.object(forKey: key as NSString) != nil { continue }
             if tasks[key] != nil { continue }
             Task(priority: .utility) { [weak self] in
-                _ = await self?.previewImage(for: url, pixelSize: pixelSize, prefetch: true)
+                _ = await self?.previewImage(for: url, pointSize: pointSize, prefetch: true)
             }
         }
     }

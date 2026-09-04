@@ -189,8 +189,19 @@ struct ThumbnailItemView: View, Equatable {
                         .font(.system(size: 9, weight: .bold))
                         .padding(.horizontal, 4).padding(.vertical, 2)
                         .background(.thinMaterial, in: Capsule())
+                } else if file.isVideo {
+                    Image(systemName: "play.fill")
+                        .font(.system(size: 9, weight: .bold))
+                        .padding(.horizontal, 5).padding(.vertical, 3)
+                        .background(.thinMaterial, in: Capsule())
                 }
                 Spacer()
+                if mark.hasEdits {
+                    Image(systemName: "slider.horizontal.3")
+                        .font(.system(size: 9, weight: .bold))
+                        .padding(4)
+                        .background(.thinMaterial, in: Circle())
+                }
                 if isPaired {
                     Image(systemName: "link")
                         .font(.system(size: 10, weight: .bold))

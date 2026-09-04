@@ -144,6 +144,21 @@ enum L10n {
     static var formatAll: String { tr("All") }
     static var formatRAW: String { tr("RAW") }
     static var formatJPG: String { tr("JPG") }
+    static var formatVideo: String { tr("Video") }
+
+    // MARK: - XMP sidecars
+
+    static var trashStaysOnCardHint: String {
+        tr("Files moved to Trash stay on the card and keep taking up space until you empty the Trash. Use permanent deletion to free space now.")
+    }
+
+    static var xmpSection: String { tr("XMP Sidecars") }
+    static var xmpWriteToggle: String { tr("Write XMP sidecars when rating or labeling") }
+    static var xmpWriteHelp: String {
+        tr("Saves an .xmp file next to each original so Lightroom, Capture One and Bridge can read your ratings. Writes to the card.")
+    }
+    static var xmpImportButton: String { tr("Import Marks from Sidecars") }
+    static var xmpExportButton: String { tr("Write Sidecars for All Marked Files") }
     static var formatPaired: String { tr("Paired") }
     static var formatUnpaired: String { tr("Unpaired") }
     static var sortDate: String { tr("Date modified") }
@@ -370,6 +385,10 @@ enum L10n {
             tr("Pairing: %@ · %lld paired", name, paired)
         }
         static func exported(_ name: String) -> String { tr("Exported: %@", name) }
+        static func xmpImported(_ n: Int) -> String {
+            tr("Imported marks from %lld XMP sidecars", n)
+        }
+        static func xmpExported(_ n: Int) -> String { tr("Wrote %lld XMP sidecars", n) }
         static func permanentlyDeleted(_ count: Int) -> String {
             tr("Permanently deleted %lld files", count)
         }
@@ -391,6 +410,9 @@ enum L10n {
             tr("%@ failed: %@", context, message)
         }
         static func exportFailed(_ message: String) -> String { tr("Export failed: %@", message) }
+        static func xmpWriteFailed(_ n: Int) -> String {
+            tr("Could not write %lld XMP sidecars (the card may be full or read-only)", n)
+        }
         static var cardRemovedCancelDelete: String {
             tr("Storage card was removed; deletion cancelled.")
         }

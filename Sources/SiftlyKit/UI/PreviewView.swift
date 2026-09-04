@@ -56,7 +56,7 @@ struct PreviewView: View {
             resetZoom()
             let url = file.url
             image = app.thumbnails.anyCachedImage(for: url)
-            let loaded = await app.thumbnails.previewImage(for: url, pixelSize: AppState.previewPixelSize)
+            let loaded = await app.thumbnails.previewImage(for: url, pointSize: AppState.previewPointSize)
             if !Task.isCancelled { image = loaded }
             app.prefetchAdjacentPreviews(around: url)
         }

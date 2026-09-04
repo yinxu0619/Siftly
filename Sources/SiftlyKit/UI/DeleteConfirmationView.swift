@@ -6,8 +6,12 @@ struct DeleteConfirmationView: View {
     @State private var working = false
     @State private var showFinalConfirm = false
     @State private var permanent = false
-
-    private var plan: DeletionPlan { app.planDeletion() }
+    /// Built once when the sheet opens. As a computed property this ran ~7x per
+    /// body evaluation, and the body re-evaluates on every deletion progress
+    /// tick — hundreds of full plan builds (each with two sorts) during exactly
+    /// the operation that should stay responsive. The selection can't change
+    /// while this modal sheet is up, so one build is enough.
+    @State private var plan = DeletionPlan(directlySelected: [], pairedAdditions: [])
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -16,6 +20,14 @@ struct DeleteConfirmationView: View {
 
             Text(L10n.deletePlanBody(plan.count, plan.totalSizeDescription, permanent))
                 .foregroundStyle(.secondary)
+
+            if !permanent, app.selectedVolumeIsRemovable {
+                Label(L10n.trashStaysOnCardHint, systemImage: "info.circle")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .padding(8)
+                    .background(Color.secondary.opacity(0.10), in: RoundedRectangle(cornerRadius: 6))
+            }
 
             if app.crossCardMode {
                 Label(L10n.crossCardWarning, systemImage: "exclamationmark.triangle.fill")
@@ -71,6 +83,7 @@ struct DeleteConfirmationView: View {
         }
         .padding()
         .frame(width: 460, height: 500)
+        .task { plan = app.planDeletion() }
         .confirmationDialog(
             permanent ? L10n.confirmPermanentDialog(plan.count) : L10n.confirmTrashDialog(plan.count),
             isPresented: $showFinalConfirm,

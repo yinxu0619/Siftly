@@ -7,7 +7,7 @@ struct InspectorView: View {
 
     private var current: MediaFile? {
         guard let url = app.currentFileURL else { return nil }
-        return app.files.first { $0.url == url }
+        return app.file(for: url)
     }
 
     var body: some View {

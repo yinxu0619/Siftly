@@ -24,8 +24,13 @@ public struct PairingRule: Codable, Equatable {
         self.crossLocation = crossLocation
     }
 
-    /// Non-RAW partners that a RAW file pairs with.
-    private static let companions = ["jpg", "jpeg", "heic", "heif"]
+    /// Non-RAW partners that a RAW file pairs with. Video is included because
+    /// drones and action cams (DJI, GoPro) write the clip under the *same* base
+    /// name as the still, so culling the photo should take the clip with it.
+    /// Cameras that prefix clips differently (Canon `IMG_` vs `MVI_`) are
+    /// unaffected — the base names simply don't match.
+    private static let companions =
+        ["jpg", "jpeg", "heic", "heif"] + Array(MediaCatalog.videoExtensions)
 
     /// Universal rule: any supported RAW pairs with JPG/HEIC. Works across Sony,
     /// Canon, Nikon, Fuji, etc. out of the box. This is the default.

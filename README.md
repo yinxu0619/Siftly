@@ -1,8 +1,10 @@
 # Siftly
 
-A lightweight macOS media manager for photographers working directly on storage cards. Siftly uses a **lightweight index** — it never copies originals, operates on files in place, and stays memory-friendly on large SD / CFexpress cards.
+A lightweight macOS media manager for photographers working directly on storage cards. Cull on the card, then **import the keepers to your computer** with verified copies. Siftly uses a **lightweight index** — it never modifies your originals and stays memory-friendly on large SD / CFexpress cards.
 
 Its standout feature is **RAW/JPG paired deletion by filename**: delete one file and matching companions are removed together. Deletions go to the macOS Trash by default (⌘Z undo), or you can **delete permanently** (skip Trash, irreversible).
+
+> **Note:** on a removable card, the macOS Trash is a folder *on the card*, so moving files there does not free space until you empty it. Use permanent deletion (or import-then-delete) to reclaim space immediately.
 
 **Languages:** English (default) and Simplified Chinese — follows your macOS system language by default, or pick a specific language in **Settings → Language**.
 
@@ -23,11 +25,21 @@ Its standout feature is **RAW/JPG paired deletion by filename**: delete one file
 ### Core
 - Auto-detects removable SD / CFexpress volumes with hot-plug refresh
 - Thumbnail grid for Sony ARW, Canon CR2/CR3, Nikon NEF/NRW, Fuji RAF, JPG/HEIC/PNG, and more
+- **Video too** (MOV/MP4/M4V/MTS/…), so the grid agrees with the Finder about how full the card is
 - **Multi-brand pairing presets**: Universal / Sony / Canon / Nikon / Fuji (toolbar link icon)
 - **RAW/JPG paired deletion**: same base name + compatible extensions in one folder → delete one, delete all
 - **Cross-card pairing**: browse all cards together; match by filename across cards (dual-slot RAW+JPG on separate cards)
 - Batch delete with full confirmation list (selected + paired additions, per-card labels)
 - **Two delete modes**: Move to Trash (undo with ⌘Z) or delete permanently
+
+### Import to computer
+- Copy from the card to any folder, with a **checksum verification** of every file
+- Organize into `One folder` / `By date` / `By year and month` / `By date, then type` (`2026-08-19/RAW`, `/JPEG`, `/Video`)
+- **Re-importing the same card copies nothing** — identical files already at the destination are skipped
+- Different photos that share a name (counter reset, two cards) are kept side by side, never overwritten
+- Optionally **move originals to Trash after a verified copy** — only files that copied *and* verified are removed
+- Checks free space up front; cancelling never leaves a half-written file behind
+- Capture timestamps are preserved on the copies
 
 ### Browse & view
 - **Full-screen preview**: ←/→ or scroll wheel, pinch/double-click/⌘+/⌘- zoom, pan, ⌘0 fit, 0–5 rating, space to toggle selection, Delete, Esc/⌘W close
@@ -50,7 +62,9 @@ Its standout feature is **RAW/JPG paired deletion by filename**: delete one file
 - Export / convert / compress: JPEG, HEIC, PNG, TIFF with quality and optional long-edge resize
 
 ### Marks & info
-- Star ratings (0–5) and color labels, persisted in a sidecar index
+- Star ratings (0–5) and color labels, persisted in a lightweight index, namespaced per card
+- **XMP sidecars** (optional): hand your cull to Lightroom / Capture One / Bridge, or import ratings back from them
+- Editor adjustments are remembered per photo — reopen and your edit is still there
 - Inspector panel with EXIF (dimensions, camera, lens, ISO, aperture, shutter, focal length, date)
 
 ### About / Sponsor
@@ -58,13 +72,17 @@ Its standout feature is **RAW/JPG paired deletion by filename**: delete one file
 - WeChat / Alipay QR codes + [PayPal](https://www.paypal.com/paypalme/yinxu0619)
 
 ### Performance
-- Streaming scan — files appear as discovered
-- Lazy thumbnails with ~256 MB memory cap
+- Streaming scan — files appear as discovered, and an abandoned scan stops immediately
+- Lazy thumbnails with ~256 MB memory cap, size-bucketed so the zoom slider is free
+- Decodes are coalesced, concurrency-capped (the card reader is the bottleneck) and **dropped when you scroll past them**, so a fling doesn't queue thousands of stale decodes
+- Prefetch runs in its own lane and can never delay the photo you navigated to
 - **Preview prefetch cache** (Settings ⌘, — default 3 neighbors per side; 0 = off)
 - O(n) pairing; batched background delete with progress
 
 ### Settings (⌘,)
 - Prefetch adjacent photos (0–20 per side)
+- Write XMP sidecars when rating/labeling; import marks from existing sidecars
+- Interface language
 
 ---
 

@@ -4,13 +4,28 @@ import Foundation
 public struct FileMark: Codable, Equatable {
     public var rating: Rating
     public var label: ColorLabel
+    /// Non-destructive editor state, so reopening a photo restores the edit.
+    /// Optional and decoded with `decodeIfPresent`, so indexes written before
+    /// this existed still load.
+    public var adjustments: ImageAdjustments?
 
-    public init(rating: Rating = .none, label: ColorLabel = .none) {
+    public init(
+        rating: Rating = .none,
+        label: ColorLabel = .none,
+        adjustments: ImageAdjustments? = nil
+    ) {
         self.rating = rating
         self.label = label
+        self.adjustments = adjustments
     }
 
-    public var isEmpty: Bool { rating == .none && label == .none }
+    public var isEmpty: Bool { rating == .none && label == .none && !hasEdits }
+
+    /// True when the editor holds a non-identity adjustment for this file.
+    public var hasEdits: Bool {
+        guard let adjustments else { return false }
+        return !adjustments.isIdentity
+    }
 }
 
 /// Persists ratings/labels as a lightweight sidecar index in Application Support.

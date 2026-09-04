@@ -24,6 +24,10 @@ struct EditorView: View {
     @State private var cropImage: NSImage?
     @State private var cropAspect: CropAspect = .free
     @State private var autoLeveling = false
+    @State private var cropRenderTask: Task<Void, Never>?
+    @State private var saveTask: Task<Void, Never>?
+    /// Last value written to the index, so closing doesn't rewrite needlessly.
+    @State private var savedAdjustments = ImageAdjustments.identity
 
     private let previewMaxDimension: CGFloat = 1800
     private static let fullRect = CGRect(x: 0, y: 0, width: 1, height: 1)
@@ -40,7 +44,7 @@ struct EditorView: View {
             }
         }
         .task(id: file.url) { await loadInitial() }
-        .onChange(of: adjustments) { _, _ in scheduleRender() }
+        .onChange(of: adjustments) { _, _ in scheduleRender(); scheduleSave() }
         .onChange(of: adjustments.rotationQuarters) { _, _ in if cropMode { resetCropDraft(); renderCropImage() } }
         .onChange(of: adjustments.flipHorizontal) { _, _ in if cropMode { resetCropDraft(); renderCropImage() } }
         .onChange(of: adjustments.straighten) { _, _ in if cropMode { renderCropImage() } }
@@ -212,7 +216,7 @@ struct EditorView: View {
                 }
             }
             Spacer()
-            Button(action: app.closeEditor) {
+            Button(action: close) {
                 Image(systemName: "xmark.circle.fill").font(.title2)
             }
             .buttonStyle(.plain)
@@ -318,12 +322,20 @@ struct EditorView: View {
         cropAspect = .free
     }
 
+    /// Debounced and cancellable, like `scheduleRender()`. Dragging the
+    /// straighten slider in crop mode fires this on every tick; without this the
+    /// renders pile up on the processor's serial queue and the slider lags well
+    /// behind the cursor.
     private func renderCropImage() {
+        cropRenderTask?.cancel()
         let current = adjustments
-        Task {
+        cropRenderTask = Task {
+            try? await Task.sleep(nanoseconds: 70_000_000)
+            if Task.isCancelled { return }
             let img = await app.processor.renderPreview(
                 url: file.url, adjustments: current, maxDimension: previewMaxDimension, includeCrop: false
             )
+            if Task.isCancelled { return }
             cropImage = img
         }
     }
@@ -385,6 +397,10 @@ struct EditorView: View {
     // MARK: - Rendering
 
     private func loadInitial() async {
+        // Restore any previously saved edit for this photo. Also resets state
+        // if the view is ever reused for a different file.
+        adjustments = app.adjustments(for: file)
+        savedAdjustments = adjustments
         sourceSize = await app.processor.sourcePixelSize(file.url)
         let base = await app.processor.renderPreview(
             url: file.url, adjustments: .identity, maxDimension: previewMaxDimension
@@ -395,6 +411,30 @@ struct EditorView: View {
         } else {
             scheduleRender()
         }
+    }
+
+    /// Writes the edit back to the mark index, debounced so dragging a slider
+    /// doesn't rewrite the index on every tick.
+    private func scheduleSave() {
+        saveTask?.cancel()
+        let current = adjustments
+        saveTask = Task {
+            try? await Task.sleep(nanoseconds: 800_000_000)
+            if Task.isCancelled { return }
+            persist(current)
+        }
+    }
+
+    private func persist(_ value: ImageAdjustments) {
+        guard value != savedAdjustments else { return }
+        app.setAdjustments(value, for: file)
+        savedAdjustments = value
+    }
+
+    private func close() {
+        saveTask?.cancel()
+        persist(adjustments)
+        app.closeEditor()
     }
 
     private func scheduleRender() {
@@ -412,7 +452,7 @@ struct EditorView: View {
     }
 
     private var closeShortcut: some View {
-        Button("", action: app.closeEditor)
+        Button("", action: close)
             .keyboardShortcut(.cancelAction)
             .opacity(0)
             .frame(width: 0, height: 0)

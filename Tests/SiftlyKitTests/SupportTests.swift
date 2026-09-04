@@ -54,20 +54,43 @@ final class SupportTests: XCTestCase {
         let id = MacVolumeService.identity(
             uuid: "E982C186-0000",
             volumeCreationDate: Date(timeIntervalSince1970: 1),
+            contentCreationDate: Date(timeIntervalSince1970: 2),
             mountPath: "/Volumes/NO NAME"
         )
         XCTAssertEqual(id, "E982C186-0000")
+    }
+
+    /// exFAT cards may report no volume creation date; the DCIM folder's
+    /// timestamp is the next line of defence before the colliding mount path.
+    func testVolumeIdentityFallsBackToContentDateBeforeMountPath() {
+        let id = MacVolumeService.identity(
+            uuid: nil,
+            volumeCreationDate: nil,
+            contentCreationDate: Date(timeIntervalSince1970: 1_700_000_000),
+            mountPath: "/Volumes/NO NAME"
+        )
+        XCTAssertEqual(id, "content-1700000000")
+
+        let other = MacVolumeService.identity(
+            uuid: nil,
+            volumeCreationDate: nil,
+            contentCreationDate: Date(timeIntervalSince1970: 1_800_000_000),
+            mountPath: "/Volumes/NO NAME"
+        )
+        XCTAssertNotEqual(id, other)
     }
 
     func testVolumeIdentityFallsBackToCreationDateNotMountPath() {
         let a = MacVolumeService.identity(
             uuid: nil,
             volumeCreationDate: Date(timeIntervalSince1970: 1_700_000_000),
+            contentCreationDate: nil,
             mountPath: "/Volumes/NO NAME"
         )
         let b = MacVolumeService.identity(
             uuid: nil,
             volumeCreationDate: Date(timeIntervalSince1970: 1_800_000_000),
+            contentCreationDate: nil,
             mountPath: "/Volumes/NO NAME"
         )
         XCTAssertEqual(a, "created-1700000000")
@@ -77,8 +100,10 @@ final class SupportTests: XCTestCase {
     func testVolumeIdentityIsStableAcrossRename() {
         let created = Date(timeIntervalSince1970: 1_700_000_000)
         XCTAssertEqual(
-            MacVolumeService.identity(uuid: nil, volumeCreationDate: created, mountPath: "/Volumes/NO NAME"),
-            MacVolumeService.identity(uuid: nil, volumeCreationDate: created, mountPath: "/Volumes/SHOOT-01")
+            MacVolumeService.identity(uuid: nil, volumeCreationDate: created,
+                                      contentCreationDate: nil, mountPath: "/Volumes/NO NAME"),
+            MacVolumeService.identity(uuid: nil, volumeCreationDate: created,
+                                      contentCreationDate: nil, mountPath: "/Volumes/SHOOT-01")
         )
     }
 
@@ -86,11 +111,13 @@ final class SupportTests: XCTestCase {
     /// is needed instead — the mount path collides across cards.
     func testVolumeIdentityFallsBackToMountPathWhenNothingElseIsAvailable() {
         XCTAssertEqual(
-            MacVolumeService.identity(uuid: nil, volumeCreationDate: nil, mountPath: "/Volumes/NO NAME"),
+            MacVolumeService.identity(uuid: nil, volumeCreationDate: nil,
+                                      contentCreationDate: nil, mountPath: "/Volumes/NO NAME"),
             "/Volumes/NO NAME"
         )
         XCTAssertEqual(
-            MacVolumeService.identity(uuid: "", volumeCreationDate: nil, mountPath: "/Volumes/X"),
+            MacVolumeService.identity(uuid: "", volumeCreationDate: nil,
+                                      contentCreationDate: nil, mountPath: "/Volumes/X"),
             "/Volumes/X"
         )
     }
@@ -99,5 +126,54 @@ final class SupportTests: XCTestCase {
         XCTAssertTrue(FileMark().isEmpty)
         XCTAssertFalse(FileMark(rating: .three, label: .none).isEmpty)
         XCTAssertFalse(FileMark(rating: .none, label: .red).isEmpty)
+    }
+
+    /// A saved edit has to keep the mark alive, otherwise the store would drop
+    /// the entry and the edit would vanish on reopen.
+    func testEditsKeepAMarkNonEmpty() {
+        var edited = ImageAdjustments()
+        edited.exposure = 30
+        XCTAssertFalse(FileMark(adjustments: edited).isEmpty)
+        XCTAssertTrue(FileMark(adjustments: edited).hasEdits)
+
+        // An identity adjustment is not an edit.
+        XCTAssertTrue(FileMark(adjustments: .identity).isEmpty)
+        XCTAssertFalse(FileMark(adjustments: .identity).hasEdits)
+    }
+
+    /// Indexes written before edits existed must still decode.
+    func testFileMarkDecodesWithoutTheAdjustmentsField() throws {
+        let legacy = Data(#"{"rating":4,"label":"red"}"#.utf8)
+        let mark = try JSONDecoder().decode(FileMark.self, from: legacy)
+        XCTAssertEqual(mark.rating, .four)
+        XCTAssertEqual(mark.label, .red)
+        XCTAssertNil(mark.adjustments)
+    }
+
+    func testFileMarkSurvivesAnAdjustmentRoundTrip() throws {
+        var edited = ImageAdjustments()
+        edited.exposure = 25
+        edited.cropRect = CGRect(x: 0.1, y: 0.1, width: 0.5, height: 0.5)
+        edited.curve = ToneCurve(points: [.init(x: 0, y: 0.1), .init(x: 1, y: 0.9)])
+        let data = try JSONEncoder().encode(FileMark(rating: .two, adjustments: edited))
+        let back = try JSONDecoder().decode(FileMark.self, from: data)
+        XCTAssertEqual(back.adjustments, edited)
+        XCTAssertEqual(back.rating, .two)
+    }
+
+    /// Videos have to be scanned and classified, or the grid disagrees with the
+    /// Finder about how full the card is.
+    func testVideoClassificationAndScanCoverage() {
+        let clip = MediaFile(url: URL(fileURLWithPath: "/c/DJI_0001.MP4"))
+        XCTAssertTrue(clip.isVideo)
+        XCTAssertFalse(clip.isRAW)
+
+        let raw = MediaFile(url: URL(fileURLWithPath: "/c/DSC001.ARW"))
+        XCTAssertFalse(raw.isVideo)
+
+        XCTAssertTrue(MediaCatalog.allMediaExtensions.contains("mp4"))
+        XCTAssertTrue(MediaCatalog.allMediaExtensions.contains("mov"))
+        XCTAssertTrue(MediaCatalog.allMediaExtensions.contains("arw"))
+        XCTAssertTrue(MediaCatalog.allMediaExtensions.isSuperset(of: MediaCatalog.imageExtensions))
     }
 }

@@ -21,6 +21,24 @@ struct SettingsView: View {
             }
 
             Section {
+                Toggle(L10n.xmpWriteToggle, isOn: $app.writesXMPSidecars)
+                Text(L10n.xmpWriteHelp)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                HStack {
+                    Button(L10n.xmpImportButton) {
+                        Task { await app.importXMPSidecars() }
+                    }
+                    Button(L10n.xmpExportButton) {
+                        Task { await app.exportAllXMPSidecars() }
+                    }
+                }
+                .disabled(app.files.isEmpty)
+            } header: {
+                Text(L10n.xmpSection)
+            }
+
+            Section {
                 Stepper(value: $app.previewPrefetchCount, in: 0...20) {
                     HStack {
                         Text(L10n.prefetchNeighbors)

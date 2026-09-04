@@ -9,8 +9,20 @@ import CoreImage.CIFilterBuiltins
 public enum ImagePipeline {
     private static let sRGB = CGColorSpace(name: CGColorSpace.sRGB)!
 
-    public static func apply(_ adj: ImageAdjustments, to input: CIImage) -> CIImage {
+    /// - Parameter renderScale: the rendered size relative to the full-resolution
+    ///   image (1.0 when exporting, ~0.2 for the editor's downscaled preview).
+    ///   Several Core Image parameters below are **absolute pixel radii**, so a
+    ///   radius tuned at full resolution covers a much larger share of a small
+    ///   preview. Without scaling them the preview genuinely does not match the
+    ///   exported file for HDR, shadows/highlights and sharpening.
+    public static func apply(
+        _ adj: ImageAdjustments,
+        to input: CIImage,
+        renderScale: Double = 1
+    ) -> CIImage {
         var image = input
+        // Keep sub-pixel radii from collapsing the filter entirely.
+        let scale = max(0.05, min(renderScale, 1))
 
         // 1. Exposure (EV).
         if adj.exposure != 0 {
@@ -28,7 +40,7 @@ public enum ImagePipeline {
         if shadowAmount != 0 || highlightAmount != 1 {
             let f = CIFilter.highlightShadowAdjust()
             f.inputImage = image
-            f.radius = 8
+            f.radius = Float(8 * scale)   // absolute pixels
             f.shadowAmount = Float(shadowAmount)
             f.highlightAmount = Float(highlightAmount)
             image = f.outputImage ?? image
@@ -77,7 +89,7 @@ public enum ImagePipeline {
         if hdrK > 0 {
             let f = CIFilter.unsharpMask()
             f.inputImage = image
-            f.radius = 12
+            f.radius = Float(12 * scale)  // absolute pixels
             f.intensity = Float(hdrK * 0.8)
             image = f.outputImage ?? image
         }
@@ -87,6 +99,7 @@ public enum ImagePipeline {
             let f = CIFilter.sharpenLuminance()
             f.inputImage = image
             f.sharpness = Float(adj.sharpen / 100.0)
+            f.radius = Float(1.69 * scale) // absolute pixels; 1.69 is the default
             image = f.outputImage ?? image
         }
 

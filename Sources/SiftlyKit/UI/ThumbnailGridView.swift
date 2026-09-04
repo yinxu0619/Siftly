@@ -32,7 +32,13 @@ struct ThumbnailGridView: View {
                         showsVolume: app.crossCardMode
                     )
                     .equatable()
-                    .background(frameReporter(file.url))
+                    // Frame reporting is mounted only while a marquee drag is
+                    // running. A GeometryReader + preference write behind every
+                    // cell costs on every scroll frame, and the merged
+                    // dictionary only ever grew; neither is worth paying for
+                    // the rest of the time. Cells themselves are `.equatable()`,
+                    // so mounting these doesn't re-render the grid contents.
+                    .background { if isMarqueeActive { frameReporter(file.url) } }
                 }
             }
             .padding()
@@ -40,10 +46,6 @@ struct ThumbnailGridView: View {
             .overlay(marqueeRectangle)
             .coordinateSpace(name: gridSpace)
             .onPreferenceChange(ItemFrameKey.self) { itemFrames = $0 }
-            // Frames accumulate as cells are realized and are never removed by
-            // the preference merge, so drop the whole map whenever the backing
-            // list changes rather than letting it grow for the session.
-            .onChange(of: app.displayedFiles.count) { itemFrames = [:] }
         }
         .safeAreaInset(edge: .top, spacing: 0) {
             if app.browseSelection != nil && !app.files.isEmpty {
@@ -79,6 +81,8 @@ struct ThumbnailGridView: View {
         }
     }
 
+    private var isMarqueeActive: Bool { marqueeStart != nil }
+
     private var marqueeRect: CGRect {
         guard let s = marqueeStart, let c = marqueeCurrent else { return .zero }
         return CGRect(x: min(s.x, c.x), y: min(s.y, c.y), width: abs(s.x - c.x), height: abs(s.y - c.y))
@@ -108,6 +112,8 @@ struct ThumbnailGridView: View {
                     .onEnded { _ in
                         marqueeStart = nil
                         marqueeCurrent = nil
+                        // Unmounts the frame readers and releases the frames.
+                        itemFrames = [:]
                     }
             )
     }
