@@ -148,6 +148,45 @@ enum L10n {
 
     // MARK: - XMP sidecars
 
+    // MARK: - Import
+
+    static var importTitle: String { tr("Import to Computer") }
+    static var importMenuTitle: String { tr("Import…") }
+    static var importHelp: String { tr("Copy files from the card to your computer") }
+    static var importDestination: String { tr("Destination") }
+    static var importChooseFolder: String { tr("Choose…") }
+    static var importNoDestination: String { tr("No folder chosen") }
+    static var importOrganize: String { tr("Organize into") }
+    static var importOrgFlat: String { tr("One folder") }
+    static var importOrgByDate: String { tr("By date") }
+    static var importOrgByYearMonth: String { tr("By year and month") }
+    static var importOrgByDateAndKind: String { tr("By date, then type") }
+    static var importIncludePaired: String { tr("Include paired files") }
+    static var importIncludePairedHelp: String {
+        tr("Bring each file's RAW/JPG companion and same-named clip, so nothing is left orphaned on the card")
+    }
+    static var importVerify: String { tr("Verify each copy (checksum)") }
+    static var importVerifyHelp: String {
+        tr("Re-reads every copied file and compares it to the original. Slower, but catches a bad card or cable.")
+    }
+    static var importDeleteAfter: String { tr("Move originals to Trash after a verified copy") }
+    static var importDeleteAfterHelp: String {
+        tr("Only files that copied and verified successfully are removed from the card.")
+    }
+    static var importStart: String { tr("Import") }
+    static var importSelectionScope: String { tr("Import selected") }
+    static var importAllScope: String { tr("Import all shown") }
+    static func importSummary(_ count: Int, _ size: String) -> String {
+        tr("%lld files · %@", count, size)
+    }
+    static func importSkipped(_ n: Int) -> String {
+        tr("%lld already at the destination (skipped)", n)
+    }
+    static func importFreeSpace(_ size: String) -> String { tr("%@ free", size) }
+    static var importCancel: String { tr("Stop") }
+    static var importDone: String { tr("Done") }
+    static var importNothingToDo: String { tr("Nothing to import") }
+
     static var trashStaysOnCardHint: String {
         tr("Files moved to Trash stay on the card and keep taking up space until you empty the Trash. Use permanent deletion to free space now.")
     }
@@ -389,6 +428,12 @@ enum L10n {
             tr("Imported marks from %lld XMP sidecars", n)
         }
         static func xmpExported(_ n: Int) -> String { tr("Wrote %lld XMP sidecars", n) }
+        static func imported(_ n: Int, _ size: String) -> String {
+            tr("Imported %lld files (%@)", n, size)
+        }
+        static func importCancelled(_ n: Int) -> String {
+            tr("Import cancelled after %lld files", n)
+        }
         static func permanentlyDeleted(_ count: Int) -> String {
             tr("Permanently deleted %lld files", count)
         }
@@ -410,6 +455,21 @@ enum L10n {
             tr("%@ failed: %@", context, message)
         }
         static func exportFailed(_ message: String) -> String { tr("Export failed: %@", message) }
+        static func importCannotRead(_ name: String) -> String {
+            tr("Could not read %@ from the card", name)
+        }
+        static func importCannotWrite(_ name: String) -> String {
+            tr("Could not write %@ to the destination", name)
+        }
+        static func importVerifyFailed(_ name: String) -> String {
+            tr("%@ did not match after copying; the copy was removed", name)
+        }
+        static func importNoSpace(_ needed: String, _ available: String) -> String {
+            tr("Not enough free space: %@ needed, %@ available", needed, available)
+        }
+        static func importPartial(_ n: Int, _ names: String) -> String {
+            tr("%lld files could not be imported: %@", n, names)
+        }
         static func xmpWriteFailed(_ n: Int) -> String {
             tr("Could not write %lld XMP sidecars (the card may be full or read-only)", n)
         }

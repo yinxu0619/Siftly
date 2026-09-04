@@ -36,6 +36,13 @@ public enum SortKey: String, CaseIterable, Identifiable {
     }
 }
 
+/// What an import run should act on.
+public enum ImportScope: String, Identifiable, Sendable {
+    case selection, allShown
+    public var id: String { rawValue }
+    public var isSelectionOnly: Bool { self == .selection }
+}
+
 @MainActor
 public final class AppState: ObservableObject {
     /// Sentinel browse selection meaning "all mounted cards" (cross-card mode).
@@ -74,6 +81,8 @@ public final class AppState: ObservableObject {
     @Published public var isShowingDeleteSheet = false
     /// Drives the "关于 / 赞助" sheet.
     @Published public var isShowingAbout = false
+    /// Drives the import sheet; true when it should act on the selection only.
+    @Published public var importScope: ImportScope?
     @Published public var pairingRule: PairingRule = .default
     @Published public private(set) var pairing: PairingResult = .empty {
         didSet { recomputeDisplayed() }
@@ -96,6 +105,63 @@ public final class AppState: ObservableObject {
             // Only rating/label filters read marks; skip the rebuild otherwise.
             if minRating > 0 || labelFilter != nil { recomputeDisplayed() }
         }
+    }
+
+    // Import progress.
+    @Published public private(set) var isImporting = false
+    @Published public private(set) var importedCount = 0
+    @Published public private(set) var importTotalCount = 0
+    @Published public private(set) var importedBytes: Int64 = 0
+    @Published public private(set) var importTotalBytes: Int64 = 0
+    @Published public private(set) var importCurrentName: String = ""
+    /// Files that failed to copy or verify, shown after the run.
+    @Published public private(set) var importFailures: [String] = []
+    private var importTask: Task<ImportOutcome, Never>?
+
+    public var importProgress: Double {
+        importTotalBytes == 0 ? 0 : Double(importedBytes) / Double(importTotalBytes)
+    }
+
+    /// Persisted import preferences (destination is stored as a bookmark so it
+    /// survives renames and keeps the user's granted access).
+    private static let importDestinationKey = "siftly.import.destination"
+    private static let importOrganizationKey = "siftly.import.organization"
+
+    @Published public var importSettings = ImportSettings() {
+        didSet { persistImportSettings() }
+    }
+
+    private func persistImportSettings() {
+        UserDefaults.standard.set(
+            importSettings.organization.rawValue, forKey: Self.importOrganizationKey
+        )
+        if let destination = importSettings.destination,
+           let bookmark = try? destination.bookmarkData(
+               options: .withSecurityScope, includingResourceValuesForKeys: nil, relativeTo: nil
+           ) {
+            UserDefaults.standard.set(bookmark, forKey: Self.importDestinationKey)
+        }
+    }
+
+    private func restoreImportSettings() {
+        var restored = ImportSettings()
+        if let raw = UserDefaults.standard.string(forKey: Self.importOrganizationKey),
+           let organization = ImportOrganization(rawValue: raw) {
+            restored.organization = organization
+        }
+        if let bookmark = UserDefaults.standard.data(forKey: Self.importDestinationKey) {
+            var stale = false
+            if let url = try? URL(
+                resolvingBookmarkData: bookmark,
+                options: .withSecurityScope,
+                relativeTo: nil,
+                bookmarkDataIsStale: &stale
+            ), !stale {
+                restored.destination = url
+            }
+        }
+        // Assigned directly to avoid the didSet writing back what we just read.
+        _importSettings = Published(initialValue: restored)
     }
 
     /// In-flight scan, validated by a token so stale results never repopulate.
@@ -194,6 +260,7 @@ public final class AppState: ObservableObject {
         #endif
 
         thumbnails.configurePreviewCache(count: previewPrefetchCount)
+        restoreImportSettings()
 
         volumeService.startObserving { [weak self] in
             self?.refreshVolumes()
@@ -879,6 +946,184 @@ public final class AppState: ObservableObject {
             errorMessage = L10n.Error.restoreFailed(failed)
         }
         rescanCurrentScope()
+    }
+
+    // MARK: - Import
+
+    /// Files an import would act on: the selection when there is one, otherwise
+    /// everything currently shown. Paired companions are pulled in when the
+    /// setting is on, so a RAW is never imported without its JPG.
+    public func importCandidates(selectionOnly: Bool) -> [MediaFile] {
+        let base = selectionOnly
+            ? displayedFiles.filter { selection.contains($0.url) }
+            : displayedFiles
+        guard importSettings.includesPairedFiles else { return base }
+
+        var seen = Set(base.map(\.url))
+        var result = base
+        for file in base {
+            for partner in pairing.partners(of: file.url)
+            where !seen.contains(partner) {
+                if let partnerFile = filesByURL[partner] {
+                    result.append(partnerFile)
+                    seen.insert(partner)
+                }
+            }
+        }
+        return result
+    }
+
+    /// Builds the copy plan, consulting the destination for files already there.
+    ///
+    /// Off the main actor: planning stats every candidate against the
+    /// destination, which is thousands of synchronous filesystem calls on a full
+    /// card and would visibly hang the sheet.
+    public func planImport(selectionOnly: Bool) async -> ImportPlan {
+        let candidates = importCandidates(selectionOnly: selectionOnly)
+        let settings = importSettings
+        return await Task.detached(priority: .userInitiated) {
+            ImportPlanner.plan(for: candidates, settings: settings) { url in
+                (try? url.resourceValues(forKeys: [.fileSizeKey]))?.fileSize.map(Int64.init)
+            }
+        }.value
+    }
+
+    public func cancelImport() {
+        importTask?.cancel()
+    }
+
+    /// Copies the planned files to the destination, verifying and optionally
+    /// clearing the originals afterwards. Runs off the main actor in a
+    /// cancellable task; progress is published back for the sheet.
+    public func performImport(_ plan: ImportPlan) async {
+        guard !plan.isEmpty, let destination = importSettings.destination else { return }
+
+        // Fail before copying anything rather than filling the disk and dying
+        // half way through.
+        if let free = FileCopier.availableCapacity(at: destination), free < plan.totalBytes {
+            errorMessage = ImportError.notEnoughSpace(
+                needed: plan.totalBytes, available: free
+            ).localizedDescription
+            return
+        }
+
+        isImporting = true
+        importedCount = 0
+        importTotalCount = plan.count
+        importedBytes = 0
+        importTotalBytes = plan.totalBytes
+        importFailures = []
+        importCurrentName = ""
+
+        let verifies = importSettings.verifies
+        // Held directly (not wrapped in another task) so `cancelImport()`
+        // actually reaches the copy loop.
+        let work = Task { [weak self] () -> ImportOutcome in
+            await Self.run(plan, verifies: verifies) { update in
+                await MainActor.run { self?.apply(update) }
+            }
+        }
+        importTask = work
+        let outcome = await work.value
+        importTask = nil
+
+        isImporting = false
+        importCurrentName = ""
+        importFailures = outcome.failures
+
+        if outcome.cancelled {
+            statusMessage = L10n.Status.importCancelled(outcome.copied.count)
+        } else {
+            let copiedBytes = outcome.copied.compactMap { $0.source.fileSize }.reduce(0, +)
+            statusMessage = L10n.Status.imported(
+                outcome.copied.count,
+                ByteCountFormatter.string(fromByteCount: copiedBytes, countStyle: .file)
+            )
+        }
+        if !outcome.failures.isEmpty {
+            let shown = outcome.failures.prefix(5).joined(separator: ", ")
+            errorMessage = L10n.Error.importPartial(outcome.failures.count, shown)
+        }
+
+        // Only ever clear originals that were copied *and* verified.
+        if importSettings.deletesAfterImport, !outcome.copied.isEmpty {
+            let safeToRemove = Set(outcome.copied.map { $0.source.url })
+            await performDeletion(
+                DeletionPlanner.plan(for: safeToRemove, pairing: .empty, filesByURL: filesByURL)
+            )
+        }
+    }
+
+    private struct ImportUpdate: Sendable {
+        var name: String?
+        var bytes: Int64 = 0
+        var finishedFile = false
+    }
+
+    private struct ImportOutcome: Sendable {
+        var copied: [ImportItem] = []
+        var failures: [String] = []
+        var cancelled = false
+    }
+
+    private func apply(_ update: ImportUpdate) {
+        // Progress hops are fire-and-forget, so a straggler can land after the
+        // run finished; ignore those rather than moving a dead progress bar.
+        guard isImporting else { return }
+        if let name = update.name { importCurrentName = name }
+        importedBytes += update.bytes
+        if update.finishedFile { importedCount += 1 }
+    }
+
+    /// The copy loop itself. Nonisolated so it runs off the main actor; it only
+    /// talks back through `report`.
+    /// Bytes copied between progress updates.
+    private nonisolated static let progressReportInterval: Int64 = 16 * 1024 * 1024
+
+    private nonisolated static func run(
+        _ plan: ImportPlan,
+        verifies: Bool,
+        report: @escaping @Sendable (ImportUpdate) async -> Void
+    ) async -> ImportOutcome {
+        var outcome = ImportOutcome()
+
+        for item in plan.items {
+            if Task.isCancelled { outcome.cancelled = true; break }
+            await report(ImportUpdate(name: item.source.name))
+
+            do {
+                // Progress is coalesced: reporting every 4 MB chunk would hop to
+                // the main actor tens of thousands of times on a full card.
+                var pending: Int64 = 0
+                let written = try FileCopier.copy(from: item.source.url, to: item.destination) { bytes in
+                    if Task.isCancelled { return false }
+                    pending += bytes
+                    if pending >= Self.progressReportInterval {
+                        let batch = pending
+                        pending = 0
+                        Task { await report(ImportUpdate(bytes: batch)) }
+                    }
+                    return true
+                }
+                if pending > 0 { await report(ImportUpdate(bytes: pending)) }
+                if verifies {
+                    let onDisk = try FileCopier.checksum(of: item.destination)
+                    guard onDisk == written else {
+                        try? FileManager.default.removeItem(at: item.destination)
+                        throw ImportError.verificationFailed(item.source.name)
+                    }
+                }
+                outcome.copied.append(item)
+                await report(ImportUpdate(finishedFile: true))
+            } catch is CancellationError {
+                outcome.cancelled = true
+                break
+            } catch {
+                outcome.failures.append(item.source.name)
+                await report(ImportUpdate(finishedFile: true))
+            }
+        }
+        return outcome
     }
 
     // MARK: - Marks

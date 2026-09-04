@@ -209,6 +209,17 @@ struct ThumbnailGridView: View {
             .disabled(app.selection.isEmpty)
 
             Menu {
+                Button(L10n.importSelectionScope) { app.importScope = .selection }
+                    .disabled(app.selection.isEmpty)
+                Button(L10n.importAllScope) { app.importScope = .allShown }
+                    .disabled(app.displayedFiles.isEmpty)
+            } label: {
+                Image(systemName: "square.and.arrow.down.on.square")
+            }
+            .help(L10n.importHelp)
+            .disabled(app.isScanning || app.isImporting)
+
+            Menu {
                 ForEach(PairingRule.presets, id: \.name) { rule in
                     Button {
                         app.applyPairingRule(rule)

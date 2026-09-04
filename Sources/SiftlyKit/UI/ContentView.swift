@@ -48,6 +48,10 @@ public struct ContentView: View {
             AboutView()
                 .environmentObject(app)
         }
+        .sheet(item: Binding(get: { app.importScope }, set: { app.importScope = $0 })) { scope in
+            ImportView(selectionOnly: scope.isSelectionOnly)
+                .environmentObject(app)
+        }
         .alert(
             L10n.errorTitle,
             isPresented: Binding(

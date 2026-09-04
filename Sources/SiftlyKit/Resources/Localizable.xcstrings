@@ -21,6 +21,17 @@
         }
       }
     },
+    "%@ did not match after copying; the copy was removed": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ 拷贝后校验不一致，已删除该副本"
+          }
+        }
+      }
+    },
     "%@ failed: %@": {
       "localizations": {
         "zh-Hans": {
@@ -51,12 +62,34 @@
         }
       }
     },
+    "%@ free": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "可用 %@"
+          }
+        }
+      }
+    },
     "%lld / %lld": {
       "localizations": {
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
             "value": "%lld / %lld"
+          }
+        }
+      }
+    },
+    "%lld already at the destination (skipped)": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld 个已存在于目标位置（已跳过）"
           }
         }
       }
@@ -101,6 +134,17 @@
         }
       }
     },
+    "%lld files could not be imported: %@": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "有 %lld 个文件导入失败：%@"
+          }
+        }
+      }
+    },
     "%lld files could not be restored (they may have been emptied from Trash).": {
       "localizations": {
         "zh-Hans": {
@@ -127,6 +171,17 @@
           "stringUnit": {
             "state": "translated",
             "value": "%lld 个文件将被永久删除（共 %@）。配对文件会一并删除。"
+          }
+        }
+      }
+    },
+    "%lld files · %@": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld 个文件 · %@"
           }
         }
       }
@@ -291,12 +346,56 @@
         }
       }
     },
+    "Bring each file's RAW/JPG companion and same-named clip, so nothing is left orphaned on the card": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "一并带上 RAW/JPG 伴随文件和同名视频，避免在卡上留下落单的文件"
+          }
+        }
+      }
+    },
     "Browse all cards together; pair and delete by filename across cards": {
       "localizations": {
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
             "value": "合并浏览所有卡，按文件名跨卡配对、同步删除"
+          }
+        }
+      }
+    },
+    "By date": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "按日期"
+          }
+        }
+      }
+    },
+    "By date, then type": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "按日期，再按类型"
+          }
+        }
+      }
+    },
+    "By year and month": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "按年月"
           }
         }
       }
@@ -347,6 +446,17 @@
           "stringUnit": {
             "state": "translated",
             "value": "拍摄"
+          }
+        }
+      }
+    },
+    "Choose…": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "选择…"
           }
         }
       }
@@ -441,6 +551,17 @@
         }
       }
     },
+    "Copy files from the card to your computer": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "把文件从存储卡拷贝到电脑"
+          }
+        }
+      }
+    },
     "Copy link": {
       "localizations": {
         "zh-Hans": {
@@ -457,6 +578,28 @@
           "stringUnit": {
             "state": "translated",
             "value": "拷贝路径"
+          }
+        }
+      }
+    },
+    "Could not read %@ from the card": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "无法从卡上读取 %@"
+          }
+        }
+      }
+    },
+    "Could not write %@ to the destination": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "无法写入 %@ 到目标位置"
           }
         }
       }
@@ -588,6 +731,17 @@
           "stringUnit": {
             "state": "translated",
             "value": "正在删除 %lld/%lld"
+          }
+        }
+      }
+    },
+    "Destination": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "目标位置"
           }
         }
       }
@@ -923,6 +1077,17 @@
         }
       }
     },
+    "Import": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "导入"
+          }
+        }
+      }
+    },
     "Import Marks from Sidecars": {
       "extractionState": "manual",
       "localizations": {
@@ -934,6 +1099,61 @@
         }
       }
     },
+    "Import all shown": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "导入当前显示的全部"
+          }
+        }
+      }
+    },
+    "Import cancelled after %lld files": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已导入 %lld 个文件后取消"
+          }
+        }
+      }
+    },
+    "Import selected": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "导入选中项"
+          }
+        }
+      }
+    },
+    "Import to Computer": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "导入到电脑"
+          }
+        }
+      }
+    },
+    "Imported %lld files (%@)": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已导入 %lld 个文件（%@）"
+          }
+        }
+      }
+    },
     "Imported marks from %lld XMP sidecars": {
       "extractionState": "manual",
       "localizations": {
@@ -941,6 +1161,28 @@
           "stringUnit": {
             "state": "translated",
             "value": "已从 %lld 个 XMP 附属文件导入标记"
+          }
+        }
+      }
+    },
+    "Import…": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "导入…"
+          }
+        }
+      }
+    },
+    "Include paired files": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "包含配对文件"
           }
         }
       }
@@ -1125,6 +1367,17 @@
         }
       }
     },
+    "Move originals to Trash after a verified copy": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "校验通过后把原文件移到废纸篓"
+          }
+        }
+      }
+    },
     "Move to Trash": {
       "localizations": {
         "zh-Hans": {
@@ -1225,6 +1478,17 @@
         }
       }
     },
+    "No folder chosen": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "尚未选择文件夹"
+          }
+        }
+      }
+    },
     "No matching files": {
       "localizations": {
         "zh-Hans": {
@@ -1255,6 +1519,28 @@
         }
       }
     },
+    "Not enough free space: %@ needed, %@ available": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "可用空间不足：需要 %@，可用 %@"
+          }
+        }
+      }
+    },
+    "Nothing to import": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "没有可导入的文件"
+          }
+        }
+      }
+    },
     "OK": {
       "localizations": {
         "zh-Hans": {
@@ -1271,6 +1557,28 @@
           "stringUnit": {
             "state": "translated",
             "value": "关闭"
+          }
+        }
+      }
+    },
+    "One folder": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "单个文件夹"
+          }
+        }
+      }
+    },
+    "Only files that copied and verified successfully are removed from the card.": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "只有拷贝并校验成功的文件才会从卡上移除。"
           }
         }
       }
@@ -1311,6 +1619,17 @@
           "stringUnit": {
             "state": "translated",
             "value": "橙"
+          }
+        }
+      }
+    },
+    "Organize into": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "整理方式"
           }
         }
       }
@@ -1521,6 +1840,17 @@
           "stringUnit": {
             "state": "translated",
             "value": "评分"
+          }
+        }
+      }
+    },
+    "Re-reads every copied file and compares it to the original. Slower, but catches a bad card or cable.": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "重新读取每个已拷贝的文件并与原始文件比对。较慢，但能发现坏卡或坏线。"
           }
         }
       }
@@ -1896,6 +2226,17 @@
         }
       }
     },
+    "Stop": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "停止"
+          }
+        }
+      }
+    },
     "Storage Cards": {
       "localizations": {
         "zh-Hans": {
@@ -2012,6 +2353,17 @@
           "stringUnit": {
             "state": "translated",
             "value": "未配对"
+          }
+        }
+      }
+    },
+    "Verify each copy (checksum)": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "校验每个副本（校验和）"
           }
         }
       }
