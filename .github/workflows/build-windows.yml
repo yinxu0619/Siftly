@@ -1,0 +1,76 @@
+name: Windows build
+on:
+  push:
+    paths: ['windows/**', '.github/workflows/build-windows.yml']
+  pull_request:
+    paths: ['windows/**', '.github/workflows/build-windows.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: windows-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        working-directory: windows
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: windows/package-lock.json
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: windows/src-tauri -> target
+      - name: Install frontend dependencies
+        run: npm ci
+      - name: Check frontend and build assets
+        run: |
+          npm run format:check
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          npm test
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          npm run build
+          exit $LASTEXITCODE
+      - name: Check Rust and run native tests
+        run: |
+          cargo fmt --manifest-path src-tauri/Cargo.toml --check
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          cargo clippy --manifest-path src-tauri/Cargo.toml --locked --all-targets -- -D warnings
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          cargo test --manifest-path src-tauri/Cargo.toml --locked --lib
+          exit $LASTEXITCODE
+      - name: Install browser and test UI
+        run: |
+          npx playwright install chromium
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          npm run test:ui
+          exit $LASTEXITCODE
+      - name: Build EXE and installers
+        run: npm run tauri -- build --bundles nsis,msi
+      - name: Package portable app and matching source
+        run: ./scripts/package.ps1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Siftly-Windows-x64
+          if-no-files-found: error
+          path: |
+            windows/src-tauri/target/release/bundle/nsis/*-setup.exe
+            windows/src-tauri/target/release/bundle/msi/*.msi
+            windows/artifacts/*.zip
+            windows/artifacts/SHA256SUMS.txt
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: Windows-test-diagnostics
+          path: windows/test-results
+          if-no-files-found: ignore

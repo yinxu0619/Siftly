@@ -1,5 +1,7 @@
 # Siftly
 
+**Windows 版本：** 新增独立的 Tauri / Rust 客户端和 EXE / MSI 构建流程，见 [`windows/README.md`](windows/README.md)。以下内容主要介绍 macOS 版。
+
 一款面向摄影师的 macOS 存储卡素材管理工具。先在卡上快速筛选，再把留下的片子**校验着导入电脑**。Siftly 采用**轻量索引模式**——绝不修改你的原始文件，适配大容量 SD / CFexpress 卡，低内存占用。
 
 **界面语言**：支持**简体中文**与**英文**（开发语言为英文）。默认跟随 macOS 系统语言，也可在**设置 → 语言**中手动指定。英文 README 见 [README.md](README.md)。

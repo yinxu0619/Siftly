@@ -1,5 +1,7 @@
 # Siftly
 
+**Windows edition:** a Tauri / Rust client is available in [`windows/`](windows/README.md), with EXE / MSI build automation. The documentation below describes the macOS application.
+
 A lightweight macOS media manager for photographers working directly on storage cards. Cull on the card, then **import the keepers to your computer** with verified copies. Siftly uses a **lightweight index** — it never modifies your originals and stays memory-friendly on large SD / CFexpress cards.
 
 Its standout feature is **RAW/JPG paired deletion by filename**: delete one file and matching companions are removed together. Deletions go to the macOS Trash by default (⌘Z undo), or you can **delete permanently** (skip Trash, irreversible).

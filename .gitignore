@@ -14,3 +14,13 @@ DerivedData/
 
 ## macOS
 .DS_Store
+
+## Windows desktop client
+windows/node_modules/
+windows/dist/
+windows/src-tauri/target/
+windows/src-tauri/gen/
+windows/test-results/
+windows/playwright-report/
+windows/artifacts/
+windows/*.tsbuildinfo
