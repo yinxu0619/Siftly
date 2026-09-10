@@ -316,3 +316,13 @@ fn file_identity(path: &Path, _metadata: &std::fs::Metadata) -> Result<String, S
         info.dwVolumeSerialNumber, info.nFileIndexHigh, info.nFileIndexLow
     ))
 }
+
+#[cfg(windows)]
+#[derive(Clone)]
+pub struct RecycledFile {
+    pub id: String,
+    pub path: String,
+}
+
+#[cfg(not(windows))]
+pub type RecycledFile = ();

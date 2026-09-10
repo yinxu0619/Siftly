@@ -235,13 +235,13 @@ pub fn scan(
     Ok(())
 }
 
-pub fn recycle(path: &Path) -> Result<(), String> {
+pub fn recycle(path: &Path) -> Result<Option<RecycledFile>, String> {
     #[cfg(windows)]
     {
-        crate::shell::recycle(path)
+        crate::shell::recycle(path).map(Some)
     }
     #[cfg(not(windows))]
     {
-        trash::delete(path).map_err(|e| e.to_string())
+        trash::delete(path).map(|_| None).map_err(|e| e.to_string())
     }
 }

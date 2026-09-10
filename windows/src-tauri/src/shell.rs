@@ -106,14 +106,6 @@ pub fn thumbnail(path: &Path, px: u32) -> Result<image::DynamicImage, String> {
             .ok_or("thumbnail_failed".into())
     }
 }
-pub fn same_path(a: &Path, b: &Path) -> bool {
-    fn clean(path: &Path) -> String {
-        shell_path(&path.to_string_lossy())
-            .replace('/', "\\")
-            .to_lowercase()
-    }
-    clean(a) == clean(b)
-}
 pub fn open(path: &str, reveal: bool) -> Result<(), String> {
     if reveal {
         std::process::Command::new("explorer.exe")
@@ -152,6 +144,7 @@ use windows::{
 #[implement(IFileOperationProgressSink)]
 struct RecycleSink {
     result: Arc<Mutex<Option<HRESULT>>>,
+    recycled_id: Arc<Mutex<Option<String>>>,
 }
 #[allow(non_snake_case)]
 impl IFileOperationProgressSink_Impl for RecycleSink_Impl {
@@ -243,11 +236,20 @@ impl IFileOperationProgressSink_Impl for RecycleSink_Impl {
         dwflags: u32,
         _psiitem: Ref<'_, IShellItem>,
         hrdelete: HRESULT,
-        _psinewlycreated: Ref<'_, IShellItem>,
+        psinewlycreated: Ref<'_, IShellItem>,
     ) -> windows::core::Result<()> {
         let _ = dwflags;
         *self.result.lock().unwrap() = Some(hrdelete);
-        hrdelete.ok()
+        hrdelete.ok()?;
+        if let Some(item) = psinewlycreated.as_ref() {
+            unsafe {
+                let value = item.GetDisplayName(SIGDN_DESKTOPABSOLUTEPARSING)?;
+                let id = value.to_string();
+                windows::Win32::System::Com::CoTaskMemFree(Some(value.0.cast()));
+                *self.recycled_id.lock().unwrap() = Some(id?);
+            }
+        }
+        Ok(())
     }
     fn PreNewItem(
         &self,
@@ -284,7 +286,7 @@ impl IFileOperationProgressSink_Impl for RecycleSink_Impl {
         Ok(())
     }
 }
-pub fn recycle(path: &Path) -> Result<(), String> {
+pub fn recycle(path: &Path) -> Result<crate::model::RecycledFile, String> {
     unsafe {
         let _com = Com(CoInitializeEx(None, COINIT_APARTMENTTHREADED).is_ok());
         let operation: IFileOperation = CoCreateInstance(&FileOperation, None, CLSCTX_ALL)
@@ -294,12 +296,15 @@ pub fn recycle(path: &Path) -> Result<(), String> {
                 FOF_NO_UI | FOF_WANTNUKEWARNING | FOFX_RECYCLEONDELETE | FOFX_EARLYFAILURE,
             )
             .map_err(|e| e.to_string())?;
-        let path = wide(&shell_path(&path.to_string_lossy()));
+        let original = path.to_string_lossy().to_string();
+        let path = wide(&shell_path(&original));
         let item: IShellItem = SHCreateItemFromParsingName(PCWSTR(path.as_ptr()), None)
             .map_err(|e| format!("recycle_create_item: {e}"))?;
         let result = Arc::new(Mutex::new(None));
+        let recycled_id = Arc::new(Mutex::new(None));
         let sink: IFileOperationProgressSink = RecycleSink {
             result: result.clone(),
+            recycled_id: recycled_id.clone(),
         }
         .into();
         operation
@@ -319,12 +324,18 @@ pub fn recycle(path: &Path) -> Result<(), String> {
         status
             .ok_or("recycle_not_completed")?
             .ok()
-            .map_err(|e| e.to_string())
+            .map_err(|e| e.to_string())?;
+        let id = recycled_id
+            .lock()
+            .unwrap()
+            .take()
+            .ok_or("recycle_receipt_unavailable")?;
+        Ok(crate::model::RecycledFile { id, path: original })
     }
 }
-pub fn restore(item: &trash::TrashItem) -> Result<(), String> {
+pub fn restore(item: &crate::model::RecycledFile) -> Result<(), String> {
     unsafe {
-        let destination = item.original_path();
+        let destination = Path::new(&item.path);
         if destination.symlink_metadata().is_ok() {
             return Err("destination_exists".into());
         }
@@ -335,13 +346,23 @@ pub fn restore(item: &trash::TrashItem) -> Result<(), String> {
         operation
             .SetOperationFlags(FOF_NO_UI | FOF_RENAMEONCOLLISION | FOFX_EARLYFAILURE)
             .map_err(|e| e.to_string())?;
-        let id = wide(&item.id.to_string_lossy());
+        let id = wide(&item.id);
         let source: IShellItem =
             SHCreateItemFromParsingName(PCWSTR(id.as_ptr()), None).map_err(|e| e.to_string())?;
-        let folder = wide(&shell_path(&item.original_parent.to_string_lossy()));
+        let folder = wide(&shell_path(
+            &destination
+                .parent()
+                .ok_or("invalid_restore_path")?
+                .to_string_lossy(),
+        ));
         let folder: IShellItem = SHCreateItemFromParsingName(PCWSTR(folder.as_ptr()), None)
             .map_err(|e| e.to_string())?;
-        let name = wide(&item.name.to_string_lossy());
+        let name = wide(
+            &destination
+                .file_name()
+                .ok_or("invalid_restore_path")?
+                .to_string_lossy(),
+        );
         operation
             .MoveItem(&source, &folder, PCWSTR(name.as_ptr()), None)
             .map_err(|e| e.to_string())?;

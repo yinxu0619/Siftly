@@ -286,13 +286,9 @@ fn replacing_a_file_with_matching_size_and_timestamp_is_detected() {
 fn windows_recycle_and_restore_round_trip() {
     let root = tempfile::tempdir().unwrap();
     let file = media(root.path(), "Siftly-recycle-test.jpg", b"round trip");
-    crate::shell::recycle(Path::new(&file.path)).unwrap();
+    let item = crate::shell::recycle(Path::new(&file.path)).unwrap();
     assert!(!Path::new(&file.path).exists());
-    let item = trash::os_limited::list()
-        .unwrap()
-        .into_iter()
-        .find(|item| crate::shell::same_path(&item.original_path(), Path::new(&file.path)))
-        .unwrap();
+    assert!(!item.id.is_empty());
     fs::write(&file.path, b"new occupant").unwrap();
     assert!(crate::shell::restore(&item).is_err());
     assert_eq!(fs::read(&file.path).unwrap(), b"new occupant");

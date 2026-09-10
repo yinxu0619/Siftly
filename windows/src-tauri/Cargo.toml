@@ -20,7 +20,6 @@ walkdir = "2"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "tiff", "webp", "bmp", "gif", "ico"] }
 rawler = "0.8"
 kamadak-exif = "0.6"
-trash = "5"
 sha2 = "0.10"
 tempfile = "3"
 filetime = "0.2"
@@ -35,3 +34,6 @@ tokio = { version = "1", features = ["sync"] }
 [target.'cfg(windows)'.dependencies]
 windows-core = "0.61"
 windows = { version = "0.61", features = ["Win32_Foundation", "Win32_Storage_FileSystem", "Win32_System_Com", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging", "Win32_Graphics_Gdi"] }
+
+[target.'cfg(not(windows))'.dependencies]
+trash = "5"

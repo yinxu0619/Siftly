@@ -35,7 +35,7 @@ pub struct AppData {
     preview: Arc<tokio::sync::Semaphore>,
     prefetch: Arc<tokio::sync::Semaphore>,
     #[cfg(windows)]
-    undo: Mutex<Vec<(trash::TrashItem, String, FileMark)>>,
+    undo: Mutex<Vec<(RecycledFile, String, FileMark)>>,
 }
 impl AppData {
     pub fn new(data: &Path, cache: &Path) -> Result<Self, String> {
@@ -374,15 +374,8 @@ pub async fn delete_files(
         let _guard = state.mutation.lock();
         let mut outcome = Outcome::default();
         #[cfg(windows)]
-        let before: std::collections::HashSet<_> = trash::os_limited::list()
-            .unwrap_or_default()
-            .iter()
-            .map(|i| i.id.clone())
-            .collect();
-        #[cfg(windows)]
         state.undo.lock().clear();
         let targets: Vec<_> = plan.selected.into_iter().chain(plan.paired).collect();
-        let mut marks = vec![];
         for (index, file) in targets.iter().enumerate() {
             if token.load(Ordering::Relaxed) {
                 outcome.cancelled = true;
@@ -391,12 +384,14 @@ pub async fn delete_files(
             let result = if !unchanged(file) {
                 Err("file_changed".into())
             } else if permanent {
-                std::fs::remove_file(&file.path).map_err(|e| e.to_string())
+                std::fs::remove_file(&file.path)
+                    .map(|_| None)
+                    .map_err(|e| e.to_string())
             } else {
                 crate::files::recycle(Path::new(&file.path))
             };
             match result {
-                Ok(()) => {
+                Ok(receipt) => {
                     outcome.completed.push(file.path.clone());
                     state.files.lock().remove(&file.path);
                     let mark = state
@@ -406,7 +401,12 @@ pub async fn delete_files(
                         .marks
                         .remove(&file.key)
                         .unwrap_or_default();
-                    marks.push((file.clone(), mark));
+                    #[cfg(windows)]
+                    if let Some(item) = receipt {
+                        state.undo.lock().push((item, file.key.clone(), mark));
+                    }
+                    #[cfg(not(windows))]
+                    let _ = (receipt, mark);
                 }
                 Err(e) => outcome.failures.push(format!("{}: {e}", file.name)),
             }
@@ -417,22 +417,6 @@ pub async fn delete_files(
                 name: file.name.clone(),
                 bytes: 0,
             });
-        }
-        #[cfg(windows)]
-        if !permanent {
-            if let Ok(items) = trash::os_limited::list() {
-                let mut undo = state.undo.lock();
-                for item in items {
-                    if before.contains(&item.id) {
-                        continue;
-                    }
-                    if let Some((file, mark)) = marks.iter().find(|(f, _)| {
-                        crate::shell::same_path(Path::new(&f.path), &item.original_path())
-                    }) {
-                        undo.push((item, file.key.clone(), mark.clone()));
-                    }
-                }
-            }
         }
         let saved = state.store.lock().save();
         state.finish(&id);
@@ -452,7 +436,7 @@ pub async fn undo_delete(state: App<'_>) -> Result<Outcome, String> {
             let entries = std::mem::take(&mut *state.undo.lock());
             let mut retry = vec![];
             for (item, key, mark) in entries {
-                let path = item.original_path();
+                let path = std::path::PathBuf::from(&item.path);
                 if path.symlink_metadata().is_ok() {
                     outcome.failures.push(path.to_string_lossy().into());
                     retry.push((item, key, mark));
@@ -704,7 +688,7 @@ pub async fn perform_import(
                         outcome.completed.push(item.source.path.clone());
                         if plan.settings.delete_after && unchanged(&item.source) {
                             match crate::files::recycle(Path::new(&item.source.path)) {
-                                Ok(()) => {
+                                Ok(_) => {
                                     state.files.lock().remove(&item.source.path);
                                     state.store.lock().data.marks.remove(&item.source.key);
                                 }
