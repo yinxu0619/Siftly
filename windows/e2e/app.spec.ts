@@ -347,3 +347,17 @@ test("closing the native window flushes the latest editor values before destroy"
       .at(-1).args.updates[0].mark.adjustments.exposure,
   ).toBe(47);
 });
+
+test("editor image bounds preserve aspect ratio for accurate crop coordinates", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1040, height: 920 });
+  await page.getByTestId("grid").getByRole("option").first().click();
+  await page.getByRole("button", { name: "Edit photo", exact: true }).click();
+  const image = page.getByTestId("edited-image");
+  await expect(image).toBeVisible();
+  const rect = await image.boundingBox();
+  expect(rect).not.toBeNull();
+  expect(rect!.width / rect!.height).toBeCloseTo(800 / 530, 2);
+  await page.screenshot({ path: "test-results/editor-1040.png" });
+});

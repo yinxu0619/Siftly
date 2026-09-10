@@ -26,7 +26,7 @@ replace-with = "vendored-sources"
 [source.vendored-sources]
 directory = "vendor"
 '@ | Set-Content -Encoding utf8NoBOM "$source/.cargo/config.toml"
-    Compress-Archive -Path "$source/*","$source/.cargo" -DestinationPath "$output/Siftly-$version-source.zip" -Force
+    Compress-Archive -Path (Get-ChildItem -LiteralPath $source -Force).FullName -DestinationPath "$output/Siftly-$version-source.zip" -Force
     Get-ChildItem "$output/*.zip",'src-tauri/target/release/bundle/nsis/*-setup.exe','src-tauri/target/release/bundle/msi/*.msi' | ForEach-Object {
         $hash=(Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
         "$hash  $($_.Name)"

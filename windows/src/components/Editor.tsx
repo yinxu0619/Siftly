@@ -153,6 +153,19 @@ export default function Editor() {
     [quality, setQuality] = useState(92),
     [edge, setEdge] = useState(0);
   const imageRef = useRef<HTMLDivElement>(null);
+  const stageRef = useRef<HTMLDivElement>(null);
+  const [stageSize, setStageSize] = useState({ width: 800, height: 600 });
+  useEffect(() => {
+    if (!stageRef.current) return;
+    const observer = new ResizeObserver(([entry]) =>
+      setStageSize({
+        width: entry.contentRect.width,
+        height: entry.contentRect.height,
+      }),
+    );
+    observer.observe(stageRef.current);
+    return () => observer.disconnect();
+  }, []);
   const start = useRef<[number, number] | null>(null);
   const current = useRef(a);
   current.current = a;
@@ -339,7 +352,7 @@ export default function Editor() {
         </div>
       </header>
       <div className="editor-body">
-        <div className="editor-stage">
+        <div className="editor-stage" ref={stageRef}>
           {renderError ? (
             <div className="empty">
               <h3>{t("unsupportedEdit")}</h3>
@@ -348,8 +361,19 @@ export default function Editor() {
           ) : rendered ? (
             <div
               className="edited-image"
+              data-testid="edited-image"
               ref={imageRef}
-              style={{ aspectRatio: `${rendered.width}/${rendered.height}` }}
+              style={{
+                width: Math.min(
+                  stageSize.width,
+                  (stageSize.height * rendered.width) / rendered.height,
+                ),
+                height: Math.min(
+                  stageSize.height,
+                  (stageSize.width * rendered.height) / rendered.width,
+                ),
+                aspectRatio: `${rendered.width}/${rendered.height}`,
+              }}
               onPointerDown={(e) => {
                 if (!crop) return;
                 start.current = cropPoint(e);
