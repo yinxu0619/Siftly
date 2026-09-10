@@ -14,6 +14,8 @@ struct ImportView: View {
 
     @State private var plan = ImportPlan()
     @State private var freeSpace: Int64?
+    @State private var plannedKey: String?
+    @State private var isPlanning = true
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -34,6 +36,9 @@ struct ImportView: View {
         .padding()
         .frame(width: 520, height: 520)
         .task(id: recomputeKey) { await recompute() }
+        .onChange(of: app.importSettings.deletesAfterImport) { _, deletes in
+            if deletes { app.importSettings.verifies = true }
+        }
     }
 
     /// Any input that changes what would be copied.
@@ -108,6 +113,7 @@ struct ImportView: View {
                 L10n.importVerify, L10n.importVerifyHelp,
                 isOn: $app.importSettings.verifies
             )
+            .disabled(app.importSettings.deletesAfterImport)
             toggle(
                 L10n.importDeleteAfter, L10n.importDeleteAfterHelp,
                 isOn: $app.importSettings.deletesAfterImport,
@@ -178,21 +184,30 @@ struct ImportView: View {
                 Button(L10n.cancel, role: .cancel) { dismiss() }
                     .keyboardShortcut(.cancelAction)
                 Button(L10n.importStart) {
+                    guard !isPlanning, plannedKey == recomputeKey else { return }
+                    let confirmed = plan
                     Task {
-                        await app.performImport(plan)
+                        await app.performImport(confirmed)
                         await recompute()
                         if app.importFailures.isEmpty { dismiss() }
                     }
                 }
                 .buttonStyle(.borderedProminent)
                 .keyboardShortcut(.defaultAction)
-                .disabled(plan.isEmpty || app.importSettings.destination == nil)
+                .disabled(isPlanning || plannedKey != recomputeKey || plan.isEmpty || app.importSettings.destination == nil)
             }
         }
     }
 
     private func recompute() async {
-        plan = await app.planImport(selectionOnly: selectionOnly)
+        let key = recomputeKey
+        isPlanning = true
+        plannedKey = nil
+        let result = await app.planImport(selectionOnly: selectionOnly)
+        guard !Task.isCancelled, key == recomputeKey else { return }
+        plan = result
         freeSpace = app.importSettings.destination.flatMap(FileCopier.availableCapacity(at:))
+        plannedKey = key
+        isPlanning = false
     }
 }

@@ -26,9 +26,8 @@ final class XMPSidecarTests: XCTestCase {
         XCTAssertEqual(read?.label, .red)
     }
 
-    /// Clearing every mark should remove the sidecar, not leave an empty one
-    /// that other apps would read as "rated 0".
-    func testWritingAnEmptyMarkRemovesTheSidecar() throws {
+    /// Clearing marks preserves the document and explicitly clears external ratings.
+    func testWritingAnEmptyMarkClearsPropertiesAndKeepsTheSidecar() throws {
         let image = tempFile("DSC002.ARW")
         try FileManager.default.createDirectory(
             at: image.deletingLastPathComponent(), withIntermediateDirectories: true
@@ -38,7 +37,7 @@ final class XMPSidecarTests: XCTestCase {
         try XMPSidecar.write(FileMark(rating: .three), for: image)
         XCTAssertTrue(XMPSidecar.exists(for: image))
         try XMPSidecar.write(FileMark(), for: image)
-        XCTAssertFalse(XMPSidecar.exists(for: image))
+        XCTAssertTrue(XMPSidecar.exists(for: image))
         XCTAssertNil(XMPSidecar.read(for: image))
     }
 
@@ -71,6 +70,36 @@ final class XMPSidecarTests: XCTestCase {
     func testUnknownLabelDoesNotBecomeAMark() {
         XCTAssertNil(XMPSidecar.parse(#"<x xmp:Label="Chartreuse"/>"#))
         XCTAssertNil(XMPSidecar.parse("<x/>"))
+    }
+
+    func testAlternateNamespacesAndElementPropertiesAreUpdatedWithoutDuplicates() throws {
+        let image = tempFile("foreign.ARW")
+        try FileManager.default.createDirectory(at: image.deletingLastPathComponent(), withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: image.deletingLastPathComponent()) }
+        let xml = """
+        <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#" xmlns:other="http://ns.adobe.com/xap/1.0/" xmlns:crs="http://ns.adobe.com/camera-raw-settings/1.0/">
+          <rdf:Description rdf:about="" crs:Exposure2012="1.25"><other:Rating>2</other:Rating><other:Label>Blue</other:Label></rdf:Description>
+        </rdf:RDF>
+        """
+        try Data(xml.utf8).write(to: XMPSidecar.url(for: image))
+        try XMPSidecar.write(FileMark(rating: .five, label: .red), for: image)
+        let result = try String(contentsOf: XMPSidecar.url(for: image))
+        XCTAssertFalse(result.contains("other:Rating"))
+        XCTAssertFalse(result.contains("other:Label"))
+        XCTAssertTrue(result.contains("crs:Exposure2012"))
+        XCTAssertEqual(XMPSidecar.read(for: image)?.rating, .five)
+        XCTAssertEqual(XMPSidecar.read(for: image)?.label, .red)
+    }
+
+    func testMalformedSidecarIsNotOverwritten() throws {
+        let image = tempFile("broken.ARW")
+        try FileManager.default.createDirectory(at: image.deletingLastPathComponent(), withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: image.deletingLastPathComponent()) }
+        let original = Data("<broken".utf8)
+        let url = XMPSidecar.url(for: image)
+        try original.write(to: url)
+        XCTAssertThrowsError(try XMPSidecar.write(FileMark(rating: .five), for: image))
+        XCTAssertEqual(try Data(contentsOf: url), original)
     }
 
     func testDocumentOmitsPropertiesThatAreNotSet() {

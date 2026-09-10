@@ -27,7 +27,7 @@ public enum ImageProcessingError: Error {
 public final class ImageProcessor: @unchecked Sendable {
     private let context: CIContext
     private let sRGB = CGColorSpace(name: CGColorSpace.sRGB)!
-    private let queue = DispatchQueue(label: "com.siftly.imageprocessor", qos: .userInitiated)
+    private let queue: DispatchQueue
 
     private let lock = NSLock()
     // Full-quality source, used for export and for reporting pixel size.
@@ -42,7 +42,10 @@ public final class ImageProcessor: @unchecked Sendable {
     /// chain so pixel-radius filters match what export will produce.
     private var previewScale: Double = 1
 
-    public init() {
+    public convenience init() { self.init(queue: DispatchQueue(label: "com.siftly.imageprocessor", qos: .userInitiated)) }
+
+    init(queue: DispatchQueue) {
+        self.queue = queue
         context = CIContext(options: [.useSoftwareRenderer: false])
     }
 
@@ -270,20 +273,29 @@ public final class ImageProcessor: @unchecked Sendable {
         maxDimension: CGFloat,
         includeCrop: Bool = true
     ) async -> NSImage? {
-        await withCheckedContinuation { cont in
-            queue.async { [self] in
-                guard let base = base(for: url, maxDimension: maxDimension) else {
-                    cont.resume(returning: nil); return
+        let cancelled = ScanFlag()
+        return await withTaskCancellationHandler {
+            await withCheckedContinuation { cont in
+                queue.async { [self] in
+                    guard !cancelled.isCancelled,
+                          let base = base(for: url, maxDimension: maxDimension) else {
+                        cont.resume(returning: nil); return
+                    }
+                    let colored = ImagePipeline.apply(adjustments, to: base.image, renderScale: base.scale)
+                    let output = Self.applyGeometry(colored, adjustments, includeCrop: includeCrop)
+                    guard !cancelled.isCancelled,
+                          let cg = context.createCGImage(output, from: output.extent, format: .RGBA8, colorSpace: sRGB),
+                          !cancelled.isCancelled else {
+                        cont.resume(returning: nil); return
+                    }
+                    cont.resume(returning: NSImage(cgImage: cg, size: NSSize(width: cg.width, height: cg.height)))
                 }
-                let colored = ImagePipeline.apply(adjustments, to: base.image, renderScale: base.scale)
-                let output = Self.applyGeometry(colored, adjustments, includeCrop: includeCrop)
-                guard let cg = context.createCGImage(output, from: output.extent, format: .RGBA8, colorSpace: sRGB) else {
-                    cont.resume(returning: nil); return
-                }
-                cont.resume(returning: NSImage(cgImage: cg, size: NSSize(width: cg.width, height: cg.height)))
             }
+        } onCancel: {
+            cancelled.cancel()
         }
     }
+
     #endif
 
     // MARK: - Export
@@ -295,6 +307,9 @@ public final class ImageProcessor: @unchecked Sendable {
         settings: ExportSettings,
         to destination: URL
     ) async throws {
+        guard url.resolvingSymlinksInPath().standardizedFileURL != destination.resolvingSymlinksInPath().standardizedFileURL else {
+            throw CocoaError(.fileWriteFileExists)
+        }
         try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in
             queue.async { [self] in
                 guard let full = loadFullSource(url) else {
@@ -307,7 +322,9 @@ public final class ImageProcessor: @unchecked Sendable {
                 }
                 output = output.cropped(to: output.extent)
                 do {
-                    try write(output, to: destination, settings: settings)
+                    try SafeFileWriter.write(to: destination) { temporary in
+                        try write(output, to: temporary, settings: settings)
+                    }
                     cont.resume(returning: ())
                 } catch {
                     cont.resume(throwing: error)

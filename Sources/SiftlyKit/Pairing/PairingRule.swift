@@ -3,7 +3,7 @@ import Foundation
 /// Describes which file extensions pair together. Two files pair when they live
 /// in the same directory, share the same base name, and their extensions belong
 /// to the *same* group.
-public struct PairingRule: Codable, Equatable {
+public struct PairingRule: Sendable, Codable, Equatable {
     public var name: String
     /// Each inner array is a set of extensions (lowercased, no dot) that pair.
     public var groups: [[String]]

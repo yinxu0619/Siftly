@@ -44,7 +44,22 @@ struct EditorView: View {
             }
         }
         .task(id: file.url) { await loadInitial() }
-        .onChange(of: adjustments) { _, _ in scheduleRender(); scheduleSave() }
+        .onChange(of: adjustments) { _, _ in
+            if cropMode { renderCropImage() } else { scheduleRender() }
+            scheduleSave()
+        }
+        .onChange(of: cropMode) { _, active in if !active { scheduleRender() } }
+        .onDisappear {
+            renderTask?.cancel()
+            cropRenderTask?.cancel()
+            saveTask?.cancel()
+            persist(adjustments)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in
+            saveTask?.cancel()
+            persist(adjustments)
+            app.flushPersistence()
+        }
         .onChange(of: adjustments.rotationQuarters) { _, _ in if cropMode { resetCropDraft(); renderCropImage() } }
         .onChange(of: adjustments.flipHorizontal) { _, _ in if cropMode { resetCropDraft(); renderCropImage() } }
         .onChange(of: adjustments.straighten) { _, _ in if cropMode { renderCropImage() } }

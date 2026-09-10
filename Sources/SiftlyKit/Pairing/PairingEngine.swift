@@ -1,7 +1,7 @@
 import Foundation
 
 /// Result of pairing: for each file, the set of its partner files.
-public struct PairingResult {
+public struct PairingResult: Sendable {
     public private(set) var partners: [URL: Set<URL>]
 
     public static let empty = PairingResult(partners: [:])

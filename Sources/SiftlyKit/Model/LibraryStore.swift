@@ -1,7 +1,7 @@
 import Foundation
 
 /// A user-applied mark on a file (rating + color label).
-public struct FileMark: Codable, Equatable {
+public struct FileMark: Codable, Equatable, Sendable {
     public var rating: Rating
     public var label: ColorLabel
     /// Non-destructive editor state, so reopening a photo restores the edit.
@@ -34,15 +34,21 @@ public struct FileMark: Codable, Equatable {
 public final class LibraryStore {
     private var marks: [String: FileMark] = [:]
     private let fileURL: URL
+    private let persistence: MarkPersistence
+    public var onSaveError: ((Error) -> Void)?
 
-    public init() {
+    public init(fileURL: URL? = nil) {
         let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
             ?? FileManager.default.temporaryDirectory
-        let dir = support.appendingPathComponent("Siftly", isDirectory: true)
-        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        self.fileURL = dir.appendingPathComponent("marks.json")
+        self.fileURL = fileURL ?? support.appendingPathComponent("Siftly/marks.json")
+        self.persistence = MarkPersistence(fileURL: self.fileURL)
         load()
     }
+
+    deinit { try? persistence.flush() }
+
+    /// Drain the latest snapshot before normal app termination or an explicit save.
+    public func flush() throws { try persistence.flush() }
 
     public static func key(volumeID: String, fileURL: URL, volumeURL: URL) -> String {
         // Strip the volume mount point as a *prefix* only. (Using
@@ -53,6 +59,8 @@ public final class LibraryStore {
         let relative = path.hasPrefix(prefix) ? String(path.dropFirst(prefix.count)) : path
         return "\(volumeID)::\(relative)"
     }
+
+    var snapshot: [String: FileMark] { marks }
 
     public func mark(forKey key: String) -> FileMark {
         marks[key] ?? FileMark()
@@ -97,7 +105,55 @@ public final class LibraryStore {
     }
 
     private func save() {
-        guard let data = try? JSONEncoder().encode(marks) else { return }
-        try? data.write(to: fileURL, options: .atomic)
+        persistence.enqueue(marks, onError: onSaveError)
+    }
+}
+
+/// The UI owns the in-memory marks; encoding and atomic disk writes happen on
+/// one queue. A burst of edits replaces the pending snapshot, not the disk file.
+private final class MarkPersistence: @unchecked Sendable {
+    private let fileURL: URL
+    private let queue = DispatchQueue(label: "com.siftly.marks", qos: .utility)
+    private let lock = NSLock()
+    private var pending: ([String: FileMark], ((Error) -> Void)?)?
+    private var scheduled = false
+    private var lastError: Error?
+
+    init(fileURL: URL) { self.fileURL = fileURL }
+
+    func enqueue(_ marks: [String: FileMark], onError: ((Error) -> Void)?) {
+        lock.lock()
+        pending = (marks, onError)
+        let needsSchedule = !scheduled
+        scheduled = true
+        lock.unlock()
+        if needsSchedule {
+            queue.asyncAfter(deadline: .now() + 0.25) { self.drain() }
+        }
+    }
+
+    private func drain() {
+        lock.lock()
+        let snapshot = pending
+        pending = nil
+        scheduled = false
+        lock.unlock()
+        guard let (marks, onError) = snapshot else { return }
+        do {
+            let data = try JSONEncoder().encode(marks)
+            try FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try data.write(to: fileURL, options: .atomic)
+            lastError = nil
+        } catch {
+            lastError = error
+            onError?(error)
+        }
+    }
+
+    func flush() throws {
+        try queue.sync {
+            drain()
+            if let lastError { throw lastError }
+        }
     }
 }

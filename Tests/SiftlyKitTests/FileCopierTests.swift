@@ -114,6 +114,38 @@ final class FileCopierTests: XCTestCase {
         XCTAssertNotEqual(try FileCopier.checksum(of: source), original)
     }
 
+    func testVerifiedCopyPublishesOnlyAfterCompletion() throws {
+        let source = try write("verified.bin", bytes: FileCopier.chunkSize + 50)
+        let destination = dir.appendingPathComponent("verified-out.bin")
+        try FileCopier.copy(from: source, to: destination, verifies: true) { _ in
+            XCTAssertFalse(FileManager.default.fileExists(atPath: destination.path))
+            return true
+        }
+        XCTAssertEqual(try FileCopier.checksum(of: destination), try FileCopier.checksum(of: source))
+        XCTAssertFalse(try FileManager.default.contentsOfDirectory(atPath: dir.path).contains { $0.hasPrefix(".siftly-") })
+    }
+
+    func testDestinationCreatedDuringCopyIsNeverReplaced() throws {
+        let source = try write("race.bin", bytes: 100)
+        let destination = dir.appendingPathComponent("race-out.bin")
+        let existing = Data("other application".utf8)
+        XCTAssertThrowsError(try FileCopier.copy(from: source, to: destination, verifies: true) { _ in
+            try! existing.write(to: destination)
+            return true
+        })
+        XCTAssertEqual(try Data(contentsOf: destination), existing)
+    }
+
+    func testDanglingSymlinkDestinationIsPreserved() throws {
+        let source = try write("link-source.bin", bytes: 100)
+        let target = dir.appendingPathComponent("absent.bin")
+        let destination = dir.appendingPathComponent("link.bin")
+        try FileManager.default.createSymbolicLink(at: destination, withDestinationURL: target)
+        XCTAssertThrowsError(try FileCopier.copy(from: source, to: destination))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: target.path))
+        XCTAssertEqual(try FileManager.default.destinationOfSymbolicLink(atPath: destination.path), target.path)
+    }
+
     func testChecksumOfEmptyFileIsTheKnownSHA256() throws {
         let empty = try write("empty.bin", bytes: 0)
         XCTAssertEqual(

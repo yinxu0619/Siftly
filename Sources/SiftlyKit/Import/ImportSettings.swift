@@ -56,10 +56,16 @@ public struct ImportSettings: Equatable, Sendable {
     /// Also bring each file's paired companions (RAW's JPG, a same-named clip),
     /// so importing never orphans half of a pair on the card.
     public var includesPairedFiles = true
-    /// Re-read both copies and compare checksums after copying.
+    /// Verify the staged destination against the checksum computed during copying.
     public var verifies = true
     /// Move to Trash from the card after a *verified* copy.
     public var deletesAfterImport = false
+
+    func hasSamePlanningInputs(as other: ImportSettings) -> Bool {
+        destination == other.destination && organization == other.organization && includesPairedFiles == other.includesPairedFiles
+    }
+
+    public var requiresVerification: Bool { verifies || deletesAfterImport }
 
     public init() {}
 }

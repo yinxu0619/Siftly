@@ -44,55 +44,39 @@ public enum FileCopier {
     public static func copy(
         from source: URL,
         to destination: URL,
+        verifies: Bool = false,
         onBytes: (Int64) -> Bool = { _ in true }
     ) throws -> String {
-        let fm = FileManager.default
-        try fm.createDirectory(
-            at: destination.deletingLastPathComponent(), withIntermediateDirectories: true
-        )
-
-        guard let input = try? FileHandle(forReadingFrom: source) else {
-            throw ImportError.cannotReadSource(source.lastPathComponent)
-        }
-        defer { try? input.close() }
-
-        guard fm.createFile(atPath: destination.path, contents: nil) else {
-            throw ImportError.cannotCreateDestination(destination.lastPathComponent)
-        }
-        guard let output = try? FileHandle(forWritingTo: destination) else {
-            throw ImportError.cannotCreateDestination(destination.lastPathComponent)
-        }
-
-        var hasher = SHA256()
-        var cancelled = false
-        do {
+        var digest = ""
+        try SafeFileWriter.write(to: destination) { temporary in
+            guard let input = try? FileHandle(forReadingFrom: source) else {
+                throw ImportError.cannotReadSource(source.lastPathComponent)
+            }
+            defer { try? input.close() }
+            try Data().write(to: temporary, options: .withoutOverwriting)
+            let output = try FileHandle(forWritingTo: temporary)
+            defer { try? output.close() }
+            var hasher = SHA256()
+            try Task.checkCancellation()
             while let chunk = try input.read(upToCount: chunkSize), !chunk.isEmpty {
                 try output.write(contentsOf: chunk)
                 hasher.update(data: chunk)
-                if !onBytes(Int64(chunk.count)) { cancelled = true; break }
+                guard onBytes(Int64(chunk.count)) else { throw CancellationError() }
+                try Task.checkCancellation()
             }
+            try output.synchronize()
             try output.close()
-        } catch {
-            try? output.close()
-            try? fm.removeItem(at: destination)
-            throw error
+            digest = digestString(hasher.finalize())
+            if verifies, try checksum(of: temporary) != digest {
+                throw ImportError.verificationFailed(source.lastPathComponent)
+            }
+            try Task.checkCancellation()
+            if let modified = try? source.resourceValues(forKeys: [.contentModificationDateKey])
+                .contentModificationDate {
+                try FileManager.default.setAttributes([.modificationDate: modified], ofItemAtPath: temporary.path)
+            }
         }
-
-        if cancelled {
-            // Never leave a half-written file behind for the user to mistake
-            // for a complete import.
-            try? fm.removeItem(at: destination)
-            throw CancellationError()
-        }
-
-        // Carry the capture timestamp across, so the copy sorts correctly and a
-        // re-import lands in the same dated folder.
-        if let modified = try? source.resourceValues(forKeys: [.contentModificationDateKey])
-            .contentModificationDate {
-            try? fm.setAttributes([.modificationDate: modified], ofItemAtPath: destination.path)
-        }
-
-        return digestString(hasher.finalize())
+        return digest
     }
 
     /// SHA-256 of a file on disk, read in chunks so large videos don't balloon
@@ -104,6 +88,7 @@ public enum FileCopier {
         defer { try? handle.close() }
         var hasher = SHA256()
         while let chunk = try handle.read(upToCount: chunkSize), !chunk.isEmpty {
+            try Task.checkCancellation()
             hasher.update(data: chunk)
         }
         return digestString(hasher.finalize())

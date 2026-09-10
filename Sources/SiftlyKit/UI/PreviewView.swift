@@ -57,14 +57,15 @@ struct PreviewView: View {
             let url = file.url
             image = app.thumbnails.anyCachedImage(for: url)
             let loaded = await app.thumbnails.previewImage(for: url, pointSize: AppState.previewPointSize)
-            if !Task.isCancelled { image = loaded }
+            guard !Task.isCancelled else { return }
+            image = loaded
             app.prefetchAdjacentPreviews(around: url)
         }
         .task(id: file.url) {
             exif = nil
             let url = file.url
             let result = await Task.detached(priority: .utility) { EXIFReader.read(from: url) }.value
-            if file.url == url { exif = result }
+            if !Task.isCancelled { exif = result }
         }
         .background(closeShortcut)
         .background(keyboardShortcuts)

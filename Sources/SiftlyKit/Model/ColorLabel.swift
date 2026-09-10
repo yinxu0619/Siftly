@@ -1,7 +1,7 @@
 import Foundation
 
 /// Finder-style color label.
-public enum ColorLabel: String, Codable, CaseIterable, Identifiable {
+public enum ColorLabel: String, Codable, Sendable, CaseIterable, Identifiable {
     case none, red, orange, yellow, green, blue, purple, gray
 
     public var id: String { rawValue }

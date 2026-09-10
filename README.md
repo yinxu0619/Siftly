@@ -35,10 +35,10 @@ Its standout feature is **RAW/JPG paired deletion by filename**: delete one file
 ### Import to computer
 - Copy from the card to any folder, with a **checksum verification** of every file
 - Organize into `One folder` / `By date` / `By year and month` / `By date, then type` (`2026-08-19/RAW`, `/JPEG`, `/Video`)
-- **Re-importing the same card copies nothing** — identical files already at the destination are skipped
+- **Re-importing the same card copies nothing** — same-name, same-size candidates are compared by checksum before being skipped
 - Different photos that share a name (counter reset, two cards) are kept side by side, never overwritten
 - Optionally **move originals to Trash after a verified copy** — only files that copied *and* verified are removed
-- Checks free space up front; cancelling never leaves a half-written file behind
+- Checks free space up front; copies are staged privately and published without overwriting existing files. Cancelling removes staged partial files. Cleanup always requires checksum verification.
 - Capture timestamps are preserved on the copies
 
 ### Browse & view
@@ -63,7 +63,7 @@ Its standout feature is **RAW/JPG paired deletion by filename**: delete one file
 
 ### Marks & info
 - Star ratings (0–5) and color labels, persisted in a lightweight index, namespaced per card
-- **XMP sidecars** (optional): hand your cull to Lightroom / Capture One / Bridge, or import ratings back from them
+- **XMP sidecars** (optional): hand single or batch ratings to Lightroom / Capture One / Bridge, or import ratings back. Updating or clearing marks preserves other editing metadata in existing sidecars.
 - Editor adjustments are remembered per photo — reopen and your edit is still there
 - Inspector panel with EXIF (dimensions, camera, lens, ISO, aperture, shutter, focal length, date)
 
@@ -72,12 +72,13 @@ Its standout feature is **RAW/JPG paired deletion by filename**: delete one file
 - WeChat / Alipay QR codes + [PayPal](https://www.paypal.com/paypalme/yinxu0619)
 
 ### Performance
-- Streaming scan — files appear as discovered, and an abandoned scan stops immediately
+- Streaming scan — batches are coalesced, file indexes updated incrementally, and filtering/sorting run in the background
 - Lazy thumbnails with ~256 MB memory cap, size-bucketed so the zoom slider is free
 - Decodes are coalesced, concurrency-capped (the card reader is the bottleneck) and **dropped when you scroll past them**, so a fling doesn't queue thousands of stale decodes
-- Prefetch runs in its own lane and can never delay the photo you navigated to
+- Queued prefetches are promoted when you open a photo; obsolete neighbor requests and queued editor renders are cancelled
 - **Preview prefetch cache** (Settings ⌘, — default 3 neighbors per side; 0 = off)
 - O(n) pairing; batched background delete with progress
+- Mark persistence coalesces edits on a background queue and flushes on normal app exit
 
 ### Settings (⌘,)
 - Prefetch adjacent photos (0–20 per side)

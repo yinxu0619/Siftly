@@ -28,6 +28,21 @@ final class ImageProcessorTests: XCTestCase {
         return url
     }
 
+    func testCancelledQueuedPreviewDoesNotRender() async throws {
+        let url = try makeJPEG(width: 800, height: 600)
+        let queue = DispatchQueue(label: "siftly.test.render")
+        queue.suspend()
+        let processor = ImageProcessor(queue: queue)
+        let request = Task { await processor.renderPreview(url: url, adjustments: .identity, maxDimension: 200) }
+        try await Task.sleep(nanoseconds: 20_000_000)
+        request.cancel()
+        queue.resume()
+        let image = await request.value
+        XCTAssertNil(image)
+        let next = await processor.renderPreview(url: url, adjustments: .identity, maxDimension: 200)
+        XCTAssertNotNil(next, "Cancellation must not prevent the latest render")
+    }
+
     func testReportsFullSourcePixelSize() async throws {
         let url = try makeJPEG(width: 1200, height: 800)
         let size = await ImageProcessor().sourcePixelSize(url)

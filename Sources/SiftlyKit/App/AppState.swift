@@ -8,7 +8,7 @@ import AppKit
 /// Central observable application state. Wires together the platform services,
 /// disk scanning, pairing, and user marks. UI observes this object.
 /// Filter for the grid by file kind / pairing state.
-public enum FormatFilter: String, CaseIterable, Identifiable {
+public enum FormatFilter: String, CaseIterable, Identifiable, Sendable {
     case all, raw, jpg, video, paired, unpaired
     public var id: String { rawValue }
     public var title: String {
@@ -24,7 +24,7 @@ public enum FormatFilter: String, CaseIterable, Identifiable {
 }
 
 /// Sort key for the grid.
-public enum SortKey: String, CaseIterable, Identifiable {
+public enum SortKey: String, CaseIterable, Identifiable, Sendable {
     case date, name, size
     public var id: String { rawValue }
     public var title: String {
@@ -55,7 +55,10 @@ public final class AppState: ObservableObject {
     public let thumbnails: ThumbnailProvider
 
     private let pairingEngine = PairingEngine()
-    private let library = LibraryStore()
+    private let library: LibraryStore
+    private let defaults: UserDefaults
+    private var terminationObserver: NSObjectProtocol?
+    private let sidecarQueue = DispatchQueue(label: "com.siftly.sidecars", qos: .utility)
     /// Non-destructive image editor backend (Core Image).
     public let processor = ImageProcessor()
 
@@ -64,10 +67,11 @@ public final class AppState: ObservableObject {
     /// Either a volume id, `allCardsTag`, or nil.
     @Published public var browseSelection: String?
     @Published public private(set) var files: [MediaFile] = [] {
-        didSet { rebuildFileIndex(); recomputeDisplayed() }
+        didSet { if !appendingFiles { rebuildFileIndex() }; recomputeDisplayed() }
     }
     /// `files` keyed by URL, so preview/editor/deletion lookups are O(1)
     /// instead of a linear scan on every SwiftUI body evaluation.
+    private var appendingFiles = false
     private var filesByURL: [URL: MediaFile] = [:]
     @Published public var selection: Set<URL> = []
     @Published public var currentFileURL: URL?
@@ -132,24 +136,24 @@ public final class AppState: ObservableObject {
     }
 
     private func persistImportSettings() {
-        UserDefaults.standard.set(
+        defaults.set(
             importSettings.organization.rawValue, forKey: Self.importOrganizationKey
         )
         if let destination = importSettings.destination,
            let bookmark = try? destination.bookmarkData(
                options: .withSecurityScope, includingResourceValuesForKeys: nil, relativeTo: nil
            ) {
-            UserDefaults.standard.set(bookmark, forKey: Self.importDestinationKey)
+            defaults.set(bookmark, forKey: Self.importDestinationKey)
         }
     }
 
     private func restoreImportSettings() {
         var restored = ImportSettings()
-        if let raw = UserDefaults.standard.string(forKey: Self.importOrganizationKey),
+        if let raw = defaults.string(forKey: Self.importOrganizationKey),
            let organization = ImportOrganization(rawValue: raw) {
             restored.organization = organization
         }
-        if let bookmark = UserDefaults.standard.data(forKey: Self.importDestinationKey) {
+        if let bookmark = defaults.data(forKey: Self.importDestinationKey) {
             var stale = false
             if let url = try? URL(
                 resolvingBookmarkData: bookmark,
@@ -194,7 +198,7 @@ public final class AppState: ObservableObject {
         didSet {
             let clamped = max(0, min(previewPrefetchCount, 20))
             if clamped != previewPrefetchCount { previewPrefetchCount = clamped; return }
-            UserDefaults.standard.set(previewPrefetchCount, forKey: Self.prefetchKey)
+            defaults.set(previewPrefetchCount, forKey: Self.prefetchKey)
             thumbnails.configurePreviewCache(count: previewPrefetchCount)
         }
     }
@@ -205,7 +209,7 @@ public final class AppState: ObservableObject {
     /// Capture One. Off by default: it writes to the user's card, which may be
     /// full or read-only, and Siftly's own index works without it.
     @Published public var writesXMPSidecars: Bool {
-        didSet { UserDefaults.standard.set(writesXMPSidecars, forKey: Self.xmpKey) }
+        didSet { defaults.set(writesXMPSidecars, forKey: Self.xmpKey) }
     }
 
     private static let languageKey = "siftly.languageOverride"
@@ -213,7 +217,7 @@ public final class AppState: ObservableObject {
     /// a locale identifier like "en" or "zh-Hans".
     @Published public var languageOverride: String? {
         didSet {
-            UserDefaults.standard.set(languageOverride, forKey: Self.languageKey)
+            defaults.set(languageOverride, forKey: Self.languageKey)
             L10n.overrideLocaleIdentifier = languageOverride
         }
     }
@@ -239,19 +243,28 @@ public final class AppState: ObservableObject {
         #endif
     }
 
-    public init() {
-        let storedPrefetch = UserDefaults.standard.object(forKey: Self.prefetchKey) as? Int
+    public init(
+        volumeService: VolumeService? = nil,
+        fileSystem: FileSystemService? = nil,
+        trash: TrashService? = nil,
+        thumbnails: ThumbnailProvider? = nil,
+        library: LibraryStore? = nil,
+        defaults: UserDefaults = .standard
+    ) {
+        self.defaults = defaults
+        self.library = library ?? LibraryStore()
+        let storedPrefetch = defaults.object(forKey: Self.prefetchKey) as? Int
         self.previewPrefetchCount = storedPrefetch ?? 3
-        self.writesXMPSidecars = UserDefaults.standard.bool(forKey: Self.xmpKey)
-        let storedLanguage = UserDefaults.standard.string(forKey: Self.languageKey)
+        self.writesXMPSidecars = defaults.bool(forKey: Self.xmpKey)
+        let storedLanguage = defaults.string(forKey: Self.languageKey)
         self.languageOverride = storedLanguage
         L10n.overrideLocaleIdentifier = storedLanguage
 
         #if os(macOS)
-        self.volumeService = MacVolumeService()
-        self.fileSystem = MacFileSystemService()
-        self.trash = MacTrashService()
-        self.thumbnails = ThumbnailProvider(service: MacThumbnailService())
+        self.volumeService = volumeService ?? MacVolumeService()
+        self.fileSystem = fileSystem ?? MacFileSystemService()
+        self.trash = trash ?? MacTrashService()
+        self.thumbnails = thumbnails ?? ThumbnailProvider(service: MacThumbnailService())
         #elseif os(Windows)
         self.volumeService = WindowsVolumeService()
         self.fileSystem = WindowsFileSystemService()
@@ -259,13 +272,27 @@ public final class AppState: ObservableObject {
         self.thumbnails = ThumbnailProvider(service: WindowsThumbnailService())
         #endif
 
-        thumbnails.configurePreviewCache(count: previewPrefetchCount)
+        self.thumbnails.configurePreviewCache(count: previewPrefetchCount)
         restoreImportSettings()
+        self.library.onSaveError = { [weak self] error in
+            Task { @MainActor in self?.errorMessage = error.localizedDescription }
+        }
+        #if canImport(AppKit)
+        terminationObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.willTerminateNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.flushPersistence() }
+        }
+        #endif
 
-        volumeService.startObserving { [weak self] in
+        self.volumeService.startObserving { [weak self] in
             self?.refreshVolumes()
         }
         refreshVolumes()
+    }
+
+    deinit {
+        if let terminationObserver { NotificationCenter.default.removeObserver(terminationObserver) }
     }
 
     /// Preloads the photos adjacent to `url` (per the user's prefetch setting) so
@@ -408,6 +435,8 @@ public final class AppState: ObservableObject {
                 continuation.onTermination = { _ in abandoned.cancel() }
                 Task.detached(priority: .userInitiated) {
                     do {
+                        var pending: [MediaFile] = []
+                        var lastPublish = Date.distantPast
                         for vol in vols {
                             if abandoned.isCancelled { break }
                             try fs.scanMediaFiles(in: vol.url, extensions: extensions, batchSize: 256) { batch in
@@ -419,10 +448,16 @@ public final class AppState: ObservableObject {
                                     m.volumeURL = vol.url
                                     return m
                                 }
-                                continuation.yield(stamped)
+                                pending.append(contentsOf: stamped)
+                                if Date().timeIntervalSince(lastPublish) >= 0.15 {
+                                    continuation.yield(pending)
+                                    pending.removeAll(keepingCapacity: true)
+                                    lastPublish = Date()
+                                }
                                 return true
                             }
                         }
+                        if !pending.isEmpty, !abandoned.isCancelled { continuation.yield(pending) }
                         continuation.finish()
                     } catch {
                         continuation.finish(throwing: error)
@@ -431,28 +466,32 @@ public final class AppState: ObservableObject {
             }
 
             do {
-                var collected: [MediaFile] = []
                 for try await batch in stream {
                     if Task.isCancelled { return }
                     guard let self, self.scanID == token else { return }
-                    collected.append(contentsOf: batch)
-                    self.files.append(contentsOf: batch)
-                    self.statusMessage = L10n.Status.scanningFound(collected.count)
+                    self.appendScanned(batch)
+                    self.statusMessage = L10n.Status.scanningFound(self.files.count)
                 }
 
                 if Task.isCancelled { return }
                 guard let self, self.scanID == token else { return }
-                let sorted = collected.sorted { lhs, rhs in
-                    (lhs.modificationDate ?? .distantPast) > (rhs.modificationDate ?? .distantPast)
-                }
-                self.files = sorted
-                self.pairing = self.pairingEngine.computePairs(sorted, rule: rule)
+                let snapshot = self.files
+                var currentRule = self.pairingRule
+                currentRule.crossLocation = self.crossCardMode
+                let completedRule = currentRule
+                let pairs = await Task.detached(priority: .userInitiated) {
+                    PairingEngine().computePairs(snapshot, rule: completedRule)
+                }.value
+                guard !Task.isCancelled, self.scanID == token else { return }
+                self.pairing = pairs
+                await self.displayTask?.value
+                guard !Task.isCancelled, self.scanID == token else { return }
                 self.isScanning = false
-                let pairedCount = sorted.filter { self.pairing.isPaired($0.url) }.count
+                let pairedCount = snapshot.filter { pairs.isPaired($0.url) }.count
                 if self.crossCardMode {
-                    self.statusMessage = L10n.Status.multiCardSummary(vols.count, sorted.count, pairedCount)
+                    self.statusMessage = L10n.Status.multiCardSummary(vols.count, snapshot.count, pairedCount)
                 } else {
-                    self.statusMessage = L10n.Status.fileCount(sorted.count)
+                    self.statusMessage = L10n.Status.fileCount(snapshot.count)
                 }
             } catch {
                 if Task.isCancelled { return }
@@ -541,58 +580,52 @@ public final class AppState: ObservableObject {
         filesByURL = Dictionary(files.map { ($0.url, $0) }, uniquingKeysWith: { _, b in b })
     }
 
+    private let displayQueue = DispatchQueue(label: "com.siftly.display", qos: .userInitiated)
+    private var displayTask: Task<Void, Never>?
+    private var displayRevision = UUID()
+
     private func recomputeDisplayed() {
-        var result = files
-
-        if !searchText.isEmpty {
-            let query = searchText.lowercased()
-            result = result.filter { $0.name.lowercased().contains(query) }
+        displayRevision = UUID()
+        displayTask?.cancel()
+        if files.isEmpty {
+            displayedFiles = []
+            displayedIndex = [:]
+            return
         }
-
-        switch formatFilter {
-        case .all: break
-        case .raw: result = result.filter { $0.isRAW }
-        case .jpg: result = result.filter { MediaCatalog.jpegExtensions.contains($0.ext) }
-        case .video: result = result.filter { $0.isVideo }
-        case .paired: result = result.filter { pairing.isPaired($0.url) }
-        case .unpaired: result = result.filter { !pairing.isPaired($0.url) }
+        let revision = displayRevision
+        displayTask = Task { [weak self] in
+            // Coalesce scan batches, search keystrokes and related filter changes.
+            try? await Task.sleep(nanoseconds: 80_000_000)
+            guard !Task.isCancelled, let self else { return }
+            let query = DisplayQuery(
+                files: self.files, searchText: self.searchText, formatFilter: self.formatFilter,
+                minRating: self.minRating, labelFilter: self.labelFilter,
+                sortKey: self.sortKey, sortAscending: self.sortAscending,
+                pairing: self.pairing, marks: self.library.snapshot
+            )
+            let cancelled = ScanFlag()
+            let result = await withTaskCancellationHandler {
+                await withCheckedContinuation { continuation in
+                    self.displayQueue.async {
+                        guard !cancelled.isCancelled else {
+                            continuation.resume(returning: Optional<(files: [MediaFile], index: [URL: Int])>.none)
+                            return
+                        }
+                        continuation.resume(returning: query.evaluate())
+                    }
+                }
+            } onCancel: { cancelled.cancel() }
+            guard !Task.isCancelled, self.displayRevision == revision, let result else { return }
+            self.displayedIndex = result.index
+            self.displayedFiles = result.files
         }
+    }
 
-        if minRating > 0 {
-            result = result.filter { mark(for: $0).rating.stars >= minRating }
-        }
-        if let label = labelFilter {
-            result = result.filter { mark(for: $0).label == label }
-        }
-
-        switch sortKey {
-        case .date:
-            let ascending = sortAscending
-            result.sort {
-                let l = $0.modificationDate ?? .distantPast
-                let r = $1.modificationDate ?? .distantPast
-                return ascending ? l < r : l > r
-            }
-        case .name:
-            let ascending = sortAscending
-            result.sort {
-                let order = $0.name.localizedStandardCompare($1.name)
-                return ascending ? order == .orderedAscending : order == .orderedDescending
-            }
-        case .size:
-            let ascending = sortAscending
-            result.sort {
-                let l = $0.fileSize ?? 0
-                let r = $1.fileSize ?? 0
-                return ascending ? l < r : l > r
-            }
-        }
-
-        var index: [URL: Int] = [:]
-        index.reserveCapacity(result.count)
-        for (position, file) in result.enumerated() { index[file.url] = position }
-        displayedIndex = index
-        displayedFiles = result
+    private func appendScanned(_ batch: [MediaFile]) {
+        for file in batch { filesByURL[file.url] = file }
+        appendingFiles = true
+        files.append(contentsOf: batch)
+        appendingFiles = false
     }
 
     public var hasActiveFilter: Bool {
@@ -632,6 +665,7 @@ public final class AppState: ObservableObject {
     }
 
     public func closePreview() {
+        thumbnails.cancelPrefetches()
         previewURL = nil
     }
 
@@ -820,6 +854,10 @@ public final class AppState: ObservableObject {
 
         let trash = self.trash
         let urls = plan.urls
+        let metadata = Dictionary(plan.allFiles.compactMap { file -> (URL, (String, FileMark))? in
+            guard let key = markKey(for: file) else { return nil }
+            return (file.url, (key, mark(for: file)))
+        }, uniquingKeysWith: { first, _ in first })
         isDeleting = true
         deletionTotal = urls.count
         deletionDone = 0
@@ -850,13 +888,13 @@ public final class AppState: ObservableObject {
 
             for (original, trashed) in result.0 {
                 deleted.insert(original)
-                let key = filesByURL[original].flatMap(markKey(for:))
+                let saved = metadata[original]
                 deletedItems.append(
                     DeletedItem(
                         original: original,
                         trashed: trashed,
-                        markKey: key,
-                        mark: key.flatMap { marks[$0] }
+                        markKey: saved?.0,
+                        mark: saved?.1
                     )
                 )
             }
@@ -873,7 +911,7 @@ public final class AppState: ObservableObject {
         // Only keys that actually carry a mark: otherwise every deletion would
         // copy and republish the whole index — and, with a rating/label filter
         // active, trigger a pointless full re-sort.
-        let staleKeys = deletedItems.compactMap(\.markKey).filter { marks[$0] != nil }
+        let staleKeys = deletedItems.filter { $0.mark?.isEmpty == false }.compactMap(\.markKey)
         files.removeAll { deleted.contains($0.url) }
         if !staleKeys.isEmpty {
             var remaining = marks
@@ -981,11 +1019,12 @@ public final class AppState: ObservableObject {
     public func planImport(selectionOnly: Bool) async -> ImportPlan {
         let candidates = importCandidates(selectionOnly: selectionOnly)
         let settings = importSettings
-        return await Task.detached(priority: .userInitiated) {
+        let work = Task.detached(priority: .userInitiated) {
             ImportPlanner.plan(for: candidates, settings: settings) { url in
                 (try? url.resourceValues(forKeys: [.fileSizeKey]))?.fileSize.map(Int64.init)
             }
-        }.value
+        }
+        return await withTaskCancellationHandler { await work.value } onCancel: { work.cancel() }
     }
 
     public func cancelImport() {
@@ -996,7 +1035,9 @@ public final class AppState: ObservableObject {
     /// clearing the originals afterwards. Runs off the main actor in a
     /// cancellable task; progress is published back for the sheet.
     public func performImport(_ plan: ImportPlan) async {
-        guard !plan.isEmpty, let destination = importSettings.destination else { return }
+        let settings = importSettings
+        guard !isImporting, !plan.isEmpty, let destination = settings.destination else { return }
+        if let planned = plan.settings, !planned.hasSamePlanningInputs(as: settings) { return }
 
         // Fail before copying anything rather than filling the disk and dying
         // half way through.
@@ -1015,7 +1056,7 @@ public final class AppState: ObservableObject {
         importFailures = []
         importCurrentName = ""
 
-        let verifies = importSettings.verifies
+        let verifies = settings.requiresVerification
         // Held directly (not wrapped in another task) so `cancelImport()`
         // actually reaches the copy loop.
         let work = Task { [weak self] () -> ImportOutcome in
@@ -1046,7 +1087,7 @@ public final class AppState: ObservableObject {
         }
 
         // Only ever clear originals that were copied *and* verified.
-        if importSettings.deletesAfterImport, !outcome.copied.isEmpty {
+        if settings.deletesAfterImport, verifies, !outcome.copied.isEmpty {
             let safeToRemove = Set(outcome.copied.map { $0.source.url })
             await performDeletion(
                 DeletionPlanner.plan(for: safeToRemove, pairing: .empty, filesByURL: filesByURL)
@@ -1095,7 +1136,7 @@ public final class AppState: ObservableObject {
                 // Progress is coalesced: reporting every 4 MB chunk would hop to
                 // the main actor tens of thousands of times on a full card.
                 var pending: Int64 = 0
-                let written = try FileCopier.copy(from: item.source.url, to: item.destination) { bytes in
+                try FileCopier.copy(from: item.source.url, to: item.destination, verifies: verifies) { bytes in
                     if Task.isCancelled { return false }
                     pending += bytes
                     if pending >= Self.progressReportInterval {
@@ -1106,13 +1147,6 @@ public final class AppState: ObservableObject {
                     return true
                 }
                 if pending > 0 { await report(ImportUpdate(bytes: pending)) }
-                if verifies {
-                    let onDisk = try FileCopier.checksum(of: item.destination)
-                    guard onDisk == written else {
-                        try? FileManager.default.removeItem(at: item.destination)
-                        throw ImportError.verificationFailed(item.source.name)
-                    }
-                }
                 outcome.copied.append(item)
                 await report(ImportUpdate(finishedFile: true))
             } catch is CancellationError {
@@ -1124,6 +1158,12 @@ public final class AppState: ObservableObject {
             }
         }
         return outcome
+    }
+
+    public func flushPersistence() {
+        do { try library.flush() }
+        catch { errorMessage = error.localizedDescription }
+        sidecarQueue.sync {}
     }
 
     // MARK: - Marks
@@ -1160,10 +1200,13 @@ public final class AppState: ObservableObject {
     private func updateMark(for file: MediaFile, _ edit: (inout FileMark) -> Void) {
         guard let key = markKey(for: file) else { return }
         var m = mark(for: file)
+        let previous = m
         edit(&m)
         library.setMark(m, forKey: key)
         if m.isEmpty { marks.removeValue(forKey: key) } else { marks[key] = m }
-        writeSidecar(m, for: file.url)
+        if previous.rating != m.rating || previous.label != m.label {
+            writeSidecar(m, for: file.url)
+        }
     }
 
     /// Mirrors a mark into an XMP sidecar when the preference is on. Fire and
@@ -1171,8 +1214,11 @@ public final class AppState: ObservableObject {
     /// must never block or fail the in-app mark.
     private func writeSidecar(_ mark: FileMark, for url: URL) {
         guard writesXMPSidecars else { return }
-        Task.detached(priority: .utility) {
-            try? XMPSidecar.write(mark, for: url)
+        sidecarQueue.async { [weak self] in
+            do { try XMPSidecar.write(mark, for: url) }
+            catch {
+                Task { @MainActor in self?.errorMessage = L10n.Error.xmpWriteFailed(1) }
+            }
         }
     }
 
@@ -1197,7 +1243,8 @@ public final class AppState: ObservableObject {
 
         var updates: [String: FileMark] = [:]
         for (url, mark) in found {
-            guard let file = filesByURL[url], let key = markKey(for: file) else { continue }
+            guard let file = filesByURL[url], self.mark(for: file).isEmpty,
+                  let key = markKey(for: file) else { continue }
             updates[key] = mark
         }
         if !updates.isEmpty {
@@ -1218,13 +1265,15 @@ public final class AppState: ObservableObject {
             statusMessage = L10n.Status.xmpExported(0)
             return
         }
-        let failures = await Task.detached(priority: .userInitiated) { () -> Int in
-            var failed = 0
-            for (url, mark) in marked {
-                do { try XMPSidecar.write(mark, for: url) } catch { failed += 1 }
+        let failures = await withCheckedContinuation { continuation in
+            sidecarQueue.async {
+                var failed = 0
+                for (url, mark) in marked {
+                    do { try XMPSidecar.write(mark, for: url) } catch { failed += 1 }
+                }
+                continuation.resume(returning: failed)
             }
-            return failed
-        }.value
+        }
         statusMessage = L10n.Status.xmpExported(marked.count - failures)
         if failures > 0 {
             errorMessage = L10n.Error.xmpWriteFailed(failures)
@@ -1244,11 +1293,12 @@ public final class AppState: ObservableObject {
     /// once per photo — hundreds of full disk writes for one batch command.
     private func applyToSelection(_ edit: (inout FileMark) -> Void) {
         var updates: [String: FileMark] = [:]
-        for url in selection {
+        for url in selection.sorted(by: { $0.path < $1.path }) {
             guard let file = filesByURL[url], let key = markKey(for: file) else { continue }
             var m = mark(for: file)
             edit(&m)
             updates[key] = m
+            writeSidecar(m, for: url)
         }
         guard !updates.isEmpty else { return }
         library.setMarks(updates)

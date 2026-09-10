@@ -28,7 +28,7 @@ final class ImportPlannerTests: XCTestCase {
         _ settings: ImportSettings,
         existing: [String: Int64] = [:]
     ) -> ImportPlan {
-        ImportPlanner.plan(for: files, settings: settings) { existing[$0.path] }
+        ImportPlanner.plan(for: files, settings: settings, contentsEqual: { _, _ in true }) { existing[$0.path] }
     }
 
     // MARK: - Layout
