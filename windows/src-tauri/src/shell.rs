@@ -38,13 +38,20 @@ impl Drop for Dc {
         }
     }
 }
+fn shell_path(path: &str) -> String {
+    if let Some(unc) = path.strip_prefix("\\\\?\\UNC\\") {
+        format!("\\\\{unc}")
+    } else {
+        path.strip_prefix("\\\\?\\").unwrap_or(path).to_owned()
+    }
+}
 fn wide(text: &str) -> Vec<u16> {
     text.encode_utf16().chain(Some(0)).collect()
 }
 pub fn thumbnail(path: &Path, px: u32) -> Result<image::DynamicImage, String> {
     unsafe {
         let _com = Com(CoInitializeEx(None, COINIT_APARTMENTTHREADED).is_ok());
-        let path = wide(&path.to_string_lossy());
+        let path = wide(&shell_path(&path.to_string_lossy()));
         let factory: IShellItemImageFactory =
             SHCreateItemFromParsingName(PCWSTR(path.as_ptr()), None).map_err(|e| e.to_string())?;
         let bitmap = Bitmap(
@@ -101,8 +108,7 @@ pub fn thumbnail(path: &Path, px: u32) -> Result<image::DynamicImage, String> {
 }
 pub fn same_path(a: &Path, b: &Path) -> bool {
     fn clean(path: &Path) -> String {
-        path.to_string_lossy()
-            .trim_start_matches("\\\\?\\")
+        shell_path(&path.to_string_lossy())
             .replace('/', "\\")
             .to_lowercase()
     }
@@ -111,12 +117,12 @@ pub fn same_path(a: &Path, b: &Path) -> bool {
 pub fn open(path: &str, reveal: bool) -> Result<(), String> {
     if reveal {
         std::process::Command::new("explorer.exe")
-            .arg(format!("/select,{}", path.trim_start_matches("\\\\?\\")))
+            .arg(format!("/select,{}", shell_path(path)))
             .spawn()
             .map_err(|e| e.to_string())?;
         return Ok(());
     }
-    let target = wide(path.trim_start_matches("\\\\?\\"));
+    let target = wide(&shell_path(path));
     let verb = wide("open");
     let result = unsafe {
         ShellExecuteW(
@@ -281,16 +287,16 @@ impl IFileOperationProgressSink_Impl for RecycleSink_Impl {
 pub fn recycle(path: &Path) -> Result<(), String> {
     unsafe {
         let _com = Com(CoInitializeEx(None, COINIT_APARTMENTTHREADED).is_ok());
-        let operation: IFileOperation =
-            CoCreateInstance(&FileOperation, None, CLSCTX_ALL).map_err(|e| e.to_string())?;
+        let operation: IFileOperation = CoCreateInstance(&FileOperation, None, CLSCTX_ALL)
+            .map_err(|e| format!("recycle_create_operation: {e}"))?;
         operation
             .SetOperationFlags(
                 FOF_NO_UI | FOF_WANTNUKEWARNING | FOFX_RECYCLEONDELETE | FOFX_EARLYFAILURE,
             )
             .map_err(|e| e.to_string())?;
-        let path = wide(&path.to_string_lossy());
-        let item: IShellItem =
-            SHCreateItemFromParsingName(PCWSTR(path.as_ptr()), None).map_err(|e| e.to_string())?;
+        let path = wide(&shell_path(&path.to_string_lossy()));
+        let item: IShellItem = SHCreateItemFromParsingName(PCWSTR(path.as_ptr()), None)
+            .map_err(|e| format!("recycle_create_item: {e}"))?;
         let result = Arc::new(Mutex::new(None));
         let sink: IFileOperationProgressSink = RecycleSink {
             result: result.clone(),
@@ -299,7 +305,9 @@ pub fn recycle(path: &Path) -> Result<(), String> {
         operation
             .DeleteItem(&item, &sink)
             .map_err(|e| e.to_string())?;
-        operation.PerformOperations().map_err(|e| e.to_string())?;
+        operation
+            .PerformOperations()
+            .map_err(|e| format!("recycle_perform: {e}"))?;
         if operation
             .GetAnyOperationsAborted()
             .map_err(|e| e.to_string())?
@@ -330,7 +338,7 @@ pub fn restore(item: &trash::TrashItem) -> Result<(), String> {
         let id = wide(&item.id.to_string_lossy());
         let source: IShellItem =
             SHCreateItemFromParsingName(PCWSTR(id.as_ptr()), None).map_err(|e| e.to_string())?;
-        let folder = wide(&item.original_parent.to_string_lossy());
+        let folder = wide(&shell_path(&item.original_parent.to_string_lossy()));
         let folder: IShellItem = SHCreateItemFromParsingName(PCWSTR(folder.as_ptr()), None)
             .map_err(|e| e.to_string())?;
         let name = wide(&item.name.to_string_lossy());
@@ -347,5 +355,22 @@ pub fn restore(item: &trash::TrashItem) -> Result<(), String> {
             return Err("restore_not_completed".into());
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn shell_paths_handle_drive_and_unc_prefixes() {
+        assert_eq!(
+            shell_path(r"\\?\C:\Photos\image.jpg"),
+            r"C:\Photos\image.jpg"
+        );
+        assert_eq!(
+            shell_path(r"\\?\UNC\server\share\image.jpg"),
+            r"\\server\share\image.jpg"
+        );
+        assert_eq!(shell_path(r"C:\Photos\image.jpg"), r"C:\Photos\image.jpg");
     }
 }

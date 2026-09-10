@@ -308,7 +308,7 @@ fn windows_shell_thumbnail() {
     image::RgbImage::from_pixel(80, 40, image::Rgb([200, 100, 50]))
         .save(&source)
         .unwrap();
-    let preview = crate::shell::thumbnail(&source, 128).unwrap();
+    let preview = crate::shell::thumbnail(&source.canonicalize().unwrap(), 128).unwrap();
     assert!(preview.width() > 0 && preview.width() <= 128);
     assert!(preview.height() > 0)
 }

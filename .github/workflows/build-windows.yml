@@ -31,6 +31,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: windows/src-tauri -> target
+          cache-on-failure: true
       - name: Install frontend dependencies
         run: npm ci
       - name: Check frontend and build assets
