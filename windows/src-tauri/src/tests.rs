@@ -182,6 +182,29 @@ fn malformed_xmp_is_not_overwritten() {
     assert_eq!(fs::read(side).unwrap(), b"<rdf:RDF><broken>")
 }
 #[test]
+fn only_raw_files_own_a_sidecar() {
+    let root = tempfile::tempdir().unwrap();
+    let raw = media(root.path(), "DSC_1.ARW", b"raw");
+    let jpg = media(root.path(), "DSC_1.JPG", b"jpg");
+    assert_eq!(sidecar(&raw), None);
+    fs::write(root.path().join("DSC_1.xmp"), b"<x/>").unwrap();
+    assert!(sidecar(&raw).is_some());
+    assert_eq!(sidecar(&jpg), None);
+}
+#[test]
+fn thumbnail_cache_rejects_foreign_names_and_forgets_missing_files() {
+    let root = tempfile::tempdir().unwrap();
+    let cache = crate::cache::ThumbnailCache::new(root.path()).unwrap();
+    let name = format!("{}.jpg", "a".repeat(64));
+    assert!(cache.put(&name, b"jpeg"));
+    assert!(cache.contains(&name));
+    assert_eq!(cache.get(&name).unwrap(), b"jpeg");
+    assert_eq!(cache.get("../library.json"), None);
+    assert_eq!(cache.get(&format!("{}é.jpg", "a".repeat(62))), None);
+    fs::remove_file(root.path().join(&name)).unwrap();
+    assert!(!cache.contains(&name));
+}
+#[test]
 fn identity_edit_and_normalized_crop() {
     let source = image::DynamicImage::ImageRgba8(image::RgbaImage::from_fn(20, 10, |x, y| {
         image::Rgba([x as u8 * 10, y as u8 * 20, 80, 255])

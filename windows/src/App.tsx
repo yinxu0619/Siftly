@@ -42,9 +42,14 @@ import { IconButton, Modal } from "./components/Common";
 export default function App() {
   const s = useLibrary(),
     { t } = useTranslation();
+  // Marks only change the visible list when a filter or the sort reads them.
+  const marksUsed =
+    s.filters.rating || s.filters.label !== "all" || s.filters.sort === "rating"
+      ? s.database.marks
+      : null;
   const files = useMemo(
     () => filtered(s),
-    [s.files, s.filters, s.volume, s.database.marks, s.pairs],
+    [s.files, s.filters, s.volume, marksUsed, s.pairs],
   );
   useEffect(() => {
     void boot();

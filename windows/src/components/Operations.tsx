@@ -3,7 +3,7 @@ import { Channel, invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useTranslation } from "react-i18next";
 import { FolderOpen, ShieldCheck, AlertTriangle } from "lucide-react";
-import { useLibrary, patch, fail, refresh } from "../lib/store";
+import { useLibrary, patch, fail, refresh, forget } from "../lib/store";
 import type {
   DeletionPlan,
   ImportPlan,
@@ -112,7 +112,8 @@ export default function Operations() {
       if (s.modal === "delete" && !permanent && outcome.completed.length)
         patch({ canUndo: true });
       patch({ busy: false });
-      await refresh();
+      if (outcome.rescan) await refresh();
+      else if (outcome.removed.length) await forget(outcome.removed);
     } catch (error) {
       fail(error);
       patch({ modal: null });

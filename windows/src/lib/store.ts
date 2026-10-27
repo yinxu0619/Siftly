@@ -251,6 +251,22 @@ export function select(
   else next.add(file.path);
   patch({ selected: next, anchor: shift ? s.anchor : file.path });
 }
+export async function forget(paths: string[]) {
+  const gone = new Set(paths);
+  patch((s) => ({
+    files: s.files.filter((f) => !gone.has(f.path)),
+    selected: new Set([...s.selected].filter((p) => !gone.has(p))),
+    anchor: s.anchor && gone.has(s.anchor) ? null : s.anchor,
+  }));
+  await recompute();
+}
+let pathIndex: { files: MediaFile[]; byPath: Map<string, MediaFile> } | null =
+  null;
+function fileAt(files: MediaFile[], path: string) {
+  if (pathIndex?.files !== files)
+    pathIndex = { files, byPath: new Map(files.map((f) => [f.path, f])) };
+  return pathIndex.byPath.get(path);
+}
 let markQueue = Promise.resolve();
 let marksSaved = true;
 export async function flushMarks() {
@@ -262,7 +278,7 @@ export function mark(paths: string[], change: Partial<FileMark>) {
     const s = useLibrary.getState();
     const updates = paths
       .map((path) => {
-        const file = s.files.find((f) => f.path === path);
+        const file = fileAt(s.files, path);
         return file
           ? {
               path,
@@ -276,8 +292,17 @@ export function mark(paths: string[], change: Partial<FileMark>) {
       .filter((x) => x !== null);
     if (!updates.length) return true;
     try {
-      const database = await invoke<Database>("set_marks", { updates });
-      patch({ database });
+      const changes = await invoke<Record<string, FileMark | null>>(
+        "set_marks",
+        { updates },
+      );
+      patch((s) => {
+        const marks = { ...s.database.marks };
+        for (const [key, value] of Object.entries(changes))
+          if (value) marks[key] = value;
+          else delete marks[key];
+        return { database: { ...s.database, marks } };
+      });
       return true;
     } catch (error) {
       fail(error);

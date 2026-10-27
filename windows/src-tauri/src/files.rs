@@ -235,6 +235,16 @@ pub fn scan(
     Ok(())
 }
 
+/// The Lightroom-style sidecar (`IMG_0001.xmp`) of a RAW file, if one exists.
+pub fn sidecar(file: &MediaFile) -> Option<PathBuf> {
+    if !file.is_raw {
+        return None;
+    }
+    let path = Path::new(&file.path).with_extension("xmp");
+    path.symlink_metadata()
+        .is_ok_and(|m| m.is_file())
+        .then_some(path)
+}
 pub fn recycle(path: &Path) -> Result<Option<RecycledFile>, String> {
     #[cfg(windows)]
     {

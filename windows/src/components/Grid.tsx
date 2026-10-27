@@ -14,6 +14,7 @@ import {
 import { Photo, Stars, Modal } from "./Common";
 import type { MediaFile } from "../lib/types";
 import { bytes } from "../lib/format";
+import { thumbnailPx } from "../lib/images";
 export default function Grid({ files }: { files: MediaFile[] }) {
   const { t } = useTranslation();
   const parent = useRef<HTMLDivElement>(null);
@@ -36,6 +37,7 @@ export default function Grid({ files }: { files: MediaFile[] }) {
   const columns = Math.max(1, Math.floor((width - 32) / (size + 12)));
   const cellWidth = (width - 32 - 12 * (columns - 1)) / columns;
   const height = cellWidth * 0.77 + 62;
+  const px = thumbnailPx(cellWidth);
   const virtual = useVirtualizer({
     count: Math.ceil(files.length / columns),
     getScrollElement: () => parent.current,
@@ -123,7 +125,7 @@ export default function Grid({ files }: { files: MediaFile[] }) {
                     }}
                   >
                     <div className="tile-image">
-                      <Photo file={file} px={Math.round(size * 2)} />
+                      <Photo file={file} px={px} />
                       <span className="format-tag">
                         {file.is_video && <Video size={11} />}{" "}
                         {file.ext.toUpperCase()}

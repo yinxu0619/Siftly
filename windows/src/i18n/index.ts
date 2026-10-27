@@ -120,7 +120,8 @@ const en = {
   prefetchHint:
     "Loads nearby photos for faster navigation. 0 disables prefetch.",
   xmp: "Write XMP when rating or labeling",
-  xmpHint: "Keeps other editing metadata in existing sidecars.",
+  xmpHint:
+    "RAW files only. Keeps other editing metadata in existing sidecars, which move with their RAW on delete and import.",
   about: "About Siftly",
   aboutBody:
     "A quiet workspace for your photography. Review on your card, keep your originals, bring the best ones home.",
@@ -313,7 +314,8 @@ const zh: Record<keyof typeof en, string> = {
   prefetch: "每侧预取照片数量",
   prefetchHint: "提前加载相邻照片以加快切换，0 表示关闭。",
   xmp: "评分或标记时写入 XMP",
-  xmpHint: "保留已有附属文件中其他软件的编辑信息。",
+  xmpHint:
+    "仅对 RAW 生效。保留已有附属文件中其他软件的编辑信息，删除和导入时随 RAW 一起处理。",
   about: "关于 Siftly",
   aboutBody:
     "专注摄影的安静工作空间。在存储卡上筛选，保留原始素材，把精选照片带回家。",

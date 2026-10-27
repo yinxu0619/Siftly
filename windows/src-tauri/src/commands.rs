@@ -10,7 +10,6 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
     collections::HashMap,
-    num::NonZeroUsize,
     path::Path,
     sync::{
         atomic::{AtomicBool, AtomicU64, Ordering},
@@ -25,7 +24,6 @@ pub struct AppData {
     store: Mutex<Store>,
     images: Images,
     cache: crate::cache::ThumbnailCache,
-    encoded: Mutex<lru::LruCache<String, String>>,
     scan_version: AtomicU64,
     operations: Mutex<HashMap<String, Arc<AtomicBool>>>,
     deletions: Mutex<HashMap<String, DeletionPlan>>,
@@ -35,7 +33,7 @@ pub struct AppData {
     preview: Arc<tokio::sync::Semaphore>,
     prefetch: Arc<tokio::sync::Semaphore>,
     #[cfg(windows)]
-    undo: Mutex<Vec<(RecycledFile, String, FileMark)>>,
+    undo: Mutex<Vec<(RecycledFile, String, FileMark, Option<RecycledFile>)>>,
 }
 impl AppData {
     pub fn new(data: &Path, cache: &Path) -> Result<Self, String> {
@@ -53,7 +51,6 @@ impl AppData {
             store: Mutex::new(store),
             images: Images::default(),
             cache: crate::cache::ThumbnailCache::new(cache)?,
-            encoded: Mutex::new(lru::LruCache::new(NonZeroUsize::new(48).unwrap())),
             scan_version: AtomicU64::new(0),
             operations: Mutex::new(HashMap::new()),
             deletions: Mutex::new(HashMap::new()),
@@ -84,6 +81,9 @@ impl AppData {
     }
     fn finish(&self, id: &str) {
         self.operations.lock().remove(id);
+    }
+    pub fn thumbnail(&self, name: &str) -> Option<Vec<u8>> {
+        self.cache.get(name)
     }
 }
 type App<'a> = State<'a, Arc<AppData>>;
@@ -116,11 +116,12 @@ pub async fn bootstrap(state: App<'_>) -> Result<Bootstrap, String> {
 fn refresh(state: &AppData) -> Vec<Volume> {
     let mut volumes = state.volumes.lock();
     let mut detected = crate::volumes::list();
+    // Saved folders are re-read every time so one that was offline returns when it reappears.
+    let folders = state.store.lock().data.folders.clone();
     detected.extend(
-        volumes
+        folders
             .iter()
-            .filter(|v| v.manual && Path::new(&v.path).is_dir())
-            .cloned(),
+            .filter_map(|p| crate::volumes::folder(Path::new(p)).ok()),
     );
     *volumes = detected.clone();
     detected
@@ -248,6 +249,13 @@ pub async fn compute_pairs(state: App<'_>, rule: Rule) -> Result<Pairs, String> 
     .await
 }
 #[derive(Serialize)]
+pub struct ThumbReply {
+    /// Disk-cache file served by the `thumb` URI scheme.
+    pub name: Option<String>,
+    /// Inline fallback when the cache could not store the thumbnail.
+    pub data: Option<String>,
+}
+#[derive(Serialize)]
 pub struct ImageReply {
     pub data: String,
     pub width: u32,
@@ -260,7 +268,7 @@ pub async fn image(
     px: u32,
     lane: String,
     id: String,
-) -> Result<ImageReply, String> {
+) -> Result<ThumbReply, String> {
     let state = state.inner().clone();
     let file = state.file(&path)?;
     let px = px.clamp(64, 3200);
@@ -284,45 +292,32 @@ pub async fn image(
                 "{}|{}|{}|{}|{}",
                 path, file.fingerprint, file.modified_nanos, file.file_size, px
             );
-            let disk = format!("{:x}.jpg", Sha256::digest(&key));
-            if let Some(data) = state.encoded.lock().get(&key).cloned() {
-                return Ok(ImageReply {
-                    data,
-                    width: 0,
-                    height: 0,
+            let name = format!("{:x}.jpg", Sha256::digest(&key));
+            if state.cache.contains(&name) {
+                return Ok(ThumbReply {
+                    name: Some(name),
+                    data: None,
                 });
             }
-            let bytes = if let Some(bytes) = state.cache.get(&disk) {
-                bytes
-            } else {
-                let decoded = crate::imaging::decode(Path::new(&path), true);
-                #[cfg(windows)]
-                let decoded = decoded.or_else(|_| crate::shell::thumbnail(Path::new(&path), px));
-                let decoded = decoded?;
-                let small = decoded.resize(px, px, image::imageops::FilterType::Triangle);
-                let bytes = crate::imaging::jpeg(&small, 85)?;
-                if !token.load(Ordering::Relaxed) {
-                    state.cache.put(&disk, &bytes);
-                }
-                bytes
-            };
-            let data = format!(
-                "data:image/jpeg;base64,{}",
-                base64::engine::general_purpose::STANDARD.encode(bytes)
-            );
-            {
-                let mut encoded = state.encoded.lock();
-                encoded.put(key, data.clone());
-                while encoded.iter().map(|(_, v)| v.len()).sum::<usize>() > 64 * 1024 * 1024
-                    && encoded.len() > 1
-                {
-                    encoded.pop_lru();
-                }
+            let decoded = crate::imaging::decode(Path::new(&path), true);
+            #[cfg(windows)]
+            let decoded = decoded.or_else(|_| crate::shell::thumbnail(Path::new(&path), px));
+            let decoded = decoded?;
+            let small = decoded.resize(px, px, image::imageops::FilterType::Triangle);
+            let bytes = crate::imaging::jpeg(&small, 85)?;
+            // Cached even if cancelled meanwhile: the decode is done and a re-request is likely.
+            if state.cache.put(&name, &bytes) {
+                return Ok(ThumbReply {
+                    name: Some(name),
+                    data: None,
+                });
             }
-            Ok(ImageReply {
-                data,
-                width: 0,
-                height: 0,
+            Ok(ThumbReply {
+                name: None,
+                data: Some(format!(
+                    "data:image/jpeg;base64,{}",
+                    base64::engine::general_purpose::STANDARD.encode(bytes)
+                )),
             })
         })();
         state.finish(&id);
@@ -393,6 +388,7 @@ pub async fn delete_files(
             match result {
                 Ok(receipt) => {
                     outcome.completed.push(file.path.clone());
+                    outcome.removed.push(file.path.clone());
                     state.files.lock().remove(&file.path);
                     let mark = state
                         .store
@@ -401,12 +397,26 @@ pub async fn delete_files(
                         .marks
                         .remove(&file.key)
                         .unwrap_or_default();
+                    // A RAW's sidecar is meaningless without it, so it goes (and comes back) too.
+                    let side = crate::files::sidecar(file).and_then(|side| {
+                        let result = if permanent {
+                            std::fs::remove_file(&side)
+                                .map(|_| None)
+                                .map_err(|e| e.to_string())
+                        } else {
+                            crate::files::recycle(&side)
+                        };
+                        result.unwrap_or_else(|e| {
+                            outcome.failures.push(format!("{}: {e}", side.display()));
+                            None
+                        })
+                    });
                     #[cfg(windows)]
                     if let Some(item) = receipt {
-                        state.undo.lock().push((item, file.key.clone(), mark));
+                        state.undo.lock().push((item, file.key.clone(), mark, side));
                     }
                     #[cfg(not(windows))]
-                    let _ = (receipt, mark);
+                    let _ = (receipt, mark, side);
                 }
                 Err(e) => outcome.failures.push(format!("{}: {e}", file.name)),
             }
@@ -435,11 +445,11 @@ pub async fn undo_delete(state: App<'_>) -> Result<Outcome, String> {
         {
             let entries = std::mem::take(&mut *state.undo.lock());
             let mut retry = vec![];
-            for (item, key, mark) in entries {
+            for (item, key, mark, side) in entries {
                 let path = std::path::PathBuf::from(&item.path);
                 if path.symlink_metadata().is_ok() {
                     outcome.failures.push(path.to_string_lossy().into());
-                    retry.push((item, key, mark));
+                    retry.push((item, key, mark, side));
                     continue;
                 }
                 match crate::shell::restore(&item) {
@@ -448,10 +458,15 @@ pub async fn undo_delete(state: App<'_>) -> Result<Outcome, String> {
                         if !mark.empty() {
                             state.store.lock().data.marks.insert(key, mark);
                         }
+                        if let Some(side) = side {
+                            if let Err(e) = crate::shell::restore(&side) {
+                                outcome.failures.push(format!("{}: {e}", side.path));
+                            }
+                        }
                     }
                     Err(e) => {
                         outcome.failures.push(e.to_string());
-                        retry.push((item, key, mark));
+                        retry.push((item, key, mark, side));
                     }
                 }
             }
@@ -469,32 +484,42 @@ pub struct MarkUpdate {
     pub path: String,
     pub mark: FileMark,
 }
+/// Changed marks by file key; `None` means the mark was cleared.
+pub type MarkChanges = HashMap<String, Option<FileMark>>;
 #[tauri::command]
-pub async fn set_marks(state: App<'_>, updates: Vec<MarkUpdate>) -> Result<Database, String> {
+pub async fn set_marks(state: App<'_>, updates: Vec<MarkUpdate>) -> Result<MarkChanges, String> {
     let state = state.inner().clone();
     blocking(move || {
-        let _guard = state.mutation.lock();
+        // The store lock (not the global mutation lock) orders this against deletions, which
+        // drop the file before its mark, without waiting on long scans, imports or exports.
+        let mut store = state.store.lock();
         let mut checked = vec![];
         for update in updates {
             update.mark.validate()?;
             checked.push((state.file(&update.path)?, update.mark));
         }
-        let mut store = state.store.lock();
-        let previous = store.data.clone();
+        let previous = store.data.marks.clone();
+        let mut changes = MarkChanges::new();
         for (file, mark) in &checked {
             if mark.empty() {
                 store.data.marks.remove(&file.key);
+                changes.insert(file.key.clone(), None);
             } else {
                 store.data.marks.insert(file.key.clone(), mark.clone());
+                changes.insert(file.key.clone(), Some(mark.clone()));
             }
         }
         if let Err(error) = store.save() {
-            store.data = previous;
+            store.data.marks = previous;
             return Err(error);
         }
         if store.data.preferences.write_xmp {
             for (file, mark) in checked {
-                let before = previous.marks.get(&file.key).cloned().unwrap_or_default();
+                // Only RAWs get sidecars: a RAW+JPG pair would otherwise share IMG.xmp.
+                if !file.is_raw {
+                    continue;
+                }
+                let before = previous.get(&file.key).cloned().unwrap_or_default();
                 if before.rating != mark.rating || before.label != mark.label {
                     if !unchanged(&file) {
                         return Err("file_changed".into());
@@ -503,7 +528,7 @@ pub async fn set_marks(state: App<'_>, updates: Vec<MarkUpdate>) -> Result<Datab
                 }
             }
         }
-        Ok(store.data.clone())
+        Ok(changes)
     })
     .await
 }
@@ -580,10 +605,10 @@ pub async fn export_image(
     adjustments: Adjustments,
     settings: ExportSettings,
 ) -> Result<(), String> {
-    let state = state.inner().clone();
     let file = state.file(&path)?;
+    // No global mutation lock: exporting only reads the source, and holding it would stall
+    // ratings and editor autosaves for the whole render.
     blocking(move || {
-        let _guard = state.mutation.lock();
         if !unchanged(&file) {
             return Err("file_changed".into());
         }
@@ -686,11 +711,35 @@ pub async fn perform_import(
                 match result {
                     Ok(()) => {
                         outcome.completed.push(item.source.path.clone());
-                        if plan.settings.delete_after && unchanged(&item.source) {
+                        // Carry the RAW's sidecar along so ratings and Lightroom edits survive.
+                        let side = crate::files::sidecar(&item.source);
+                        let side_copied = match &side {
+                            Some(side) => crate::files::copy_verified(
+                                side,
+                                &Path::new(&item.destination).with_extension("xmp"),
+                                &token,
+                                |_| {},
+                            )
+                            .map_err(|e| {
+                                outcome.failures.push(format!("{}: {e}", side.display()))
+                            })
+                            .is_ok(),
+                            None => true,
+                        };
+                        if plan.settings.delete_after && side_copied && unchanged(&item.source)
+                        {
                             match crate::files::recycle(Path::new(&item.source.path)) {
                                 Ok(_) => {
+                                    outcome.removed.push(item.source.path.clone());
                                     state.files.lock().remove(&item.source.path);
                                     state.store.lock().data.marks.remove(&item.source.key);
+                                    if let Some(side) = &side {
+                                        if let Err(e) = crate::files::recycle(side) {
+                                            outcome
+                                                .failures
+                                                .push(format!("{}: {e}", side.display()))
+                                        }
+                                    }
                                 }
                                 Err(e) => {
                                     outcome.failures.push(format!("{}: {e}", item.source.name))
@@ -712,6 +761,16 @@ pub async fn perform_import(
                     bytes,
                 });
             }
+            // Only an import into a library folder brings in files the library has not seen.
+            let destination = Path::new(&plan.settings.destination).canonicalize().ok();
+            outcome.rescan = !outcome.completed.is_empty()
+                && destination.is_some_and(|d| {
+                    state
+                        .volumes
+                        .lock()
+                        .iter()
+                        .any(|v| d.starts_with(&v.path))
+                });
             state.store.lock().save()?;
             Ok(outcome)
         })();

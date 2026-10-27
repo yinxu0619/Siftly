@@ -293,6 +293,9 @@ pub struct Outcome {
     pub skipped: Vec<String>,
     pub failures: Vec<String>,
     pub cancelled: bool,
+    /// Paths that left the library, so the client can drop them without a rescan.
+    pub removed: Vec<String>,
+    pub rescan: bool,
 }
 
 #[cfg(unix)]

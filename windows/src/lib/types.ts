@@ -110,6 +110,8 @@ export interface Outcome {
   skipped: string[];
   failures: string[];
   cancelled: boolean;
+  removed: string[];
+  rescan: boolean;
 }
 export interface Progress {
   id: string;
@@ -122,6 +124,10 @@ export interface ImageReply {
   data: string;
   width: number;
   height: number;
+}
+export interface ThumbReply {
+  name: string | null;
+  data: string | null;
 }
 export interface Exif {
   width: number | null;

@@ -12,6 +12,11 @@ struct Index {
     items: LruCache<String, u64>,
     bytes: u64,
 }
+fn valid(name: &str) -> bool {
+    name.len() == 68
+        && name.ends_with(".jpg")
+        && name[..64].bytes().all(|b| b.is_ascii_hexdigit())
+}
 pub struct ThumbnailCache {
     root: PathBuf,
     index: Mutex<Index>,
@@ -24,10 +29,7 @@ impl ThumbnailCache {
             .filter_map(Result::ok)
             .filter_map(|entry| {
                 let name = entry.file_name().to_str()?.to_owned();
-                if name.len() != 68
-                    || !name.ends_with(".jpg")
-                    || !name[..64].bytes().all(|b| b.is_ascii_hexdigit())
-                {
+                if !valid(&name) {
                     return None;
                 }
                 let meta = entry.metadata().ok()?;
@@ -66,17 +68,33 @@ impl ThumbnailCache {
         }
     }
     pub fn get(&self, name: &str) -> Option<Vec<u8>> {
-        let mut index = self.index.lock();
-        index.items.get(name)?;
+        if !valid(name) {
+            return None;
+        }
+        self.index.lock().items.get(name)?;
         fs::read(self.root.join(name)).ok()
     }
-    pub fn put(&self, name: &str, bytes: &[u8]) {
+    /// Whether `name` is cached on disk; marks it recently used.
+    pub fn contains(&self, name: &str) -> bool {
+        let mut index = self.index.lock();
+        if index.items.get(name).is_none() {
+            return false;
+        }
+        if self.root.join(name).is_file() {
+            return true;
+        }
+        if let Some(size) = index.items.pop(name) {
+            index.bytes -= size;
+        }
+        false
+    }
+    pub fn put(&self, name: &str, bytes: &[u8]) -> bool {
         let mut index = self.index.lock();
         let Ok(mut temp) = tempfile::NamedTempFile::new_in(&self.root) else {
-            return;
+            return false;
         };
         if temp.write_all(bytes).is_err() || temp.persist(self.root.join(name)).is_err() {
-            return;
+            return false;
         }
         index.bytes += bytes.len() as u64;
         if let Some((old, size)) = index.items.push(name.into(), bytes.len() as u64) {
@@ -86,5 +104,6 @@ impl ThumbnailCache {
             }
         }
         Self::prune(&self.root, &mut index);
+        index.items.contains(name)
     }
 }

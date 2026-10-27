@@ -129,6 +129,8 @@ export function Photo({
 }) {
   const [data, setData] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(false);
+  const [reload, setReload] = useState(0);
+  const retried = useRef<string | null>(null);
   useEffect(() => {
     setData(null);
     setLoaded(false);
@@ -144,7 +146,7 @@ export function Photo({
       alive = false;
       ticket.release();
     };
-  }, [file.path, file.fingerprint, file.modified_nanos, px, lane]);
+  }, [file.path, file.fingerprint, file.modified_nanos, px, lane, reload]);
   return data ? (
     <img
       draggable={false}
@@ -152,6 +154,14 @@ export function Photo({
       style={style}
       src={data}
       alt={file.name}
+      onError={() => {
+        // The disk cache may have evicted the file behind a remembered URL.
+        const key = images.key(file, px);
+        if (retried.current === key) return setData(null);
+        retried.current = key;
+        images.evict(file, px);
+        setReload((n) => n + 1);
+      }}
     />
   ) : (
     <span className="photo-placeholder">

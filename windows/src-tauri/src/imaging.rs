@@ -39,7 +39,14 @@ pub fn decode(path: &Path, embedded: bool) -> Result<DynamicImage, String> {
         let params = rawler::decoders::RawDecodeParams::default();
         if embedded {
             if let Ok(Some(image)) = decoder.full_image(&source, &params) {
-                return Ok(orient(image, orientation(path)));
+                // kamadak-exif cannot parse CR3 or RAF containers; rawler reads what it decodes.
+                let rotation = decoder
+                    .raw_metadata(&source, &params)
+                    .ok()
+                    .and_then(|m| m.exif.orientation)
+                    .map(u32::from)
+                    .unwrap_or_else(|| orientation(path));
+                return Ok(orient(image, rotation));
             }
         }
         static RAW_DEVELOP: Mutex<()> = Mutex::new(());

@@ -14,6 +14,25 @@ use tauri::Manager;
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        // Thumbnails are served from the disk cache instead of as base64 over IPC.
+        .register_asynchronous_uri_scheme_protocol("thumb", |ctx, request, responder| {
+            let state = ctx
+                .app_handle()
+                .try_state::<std::sync::Arc<commands::AppData>>()
+                .map(|s| s.inner().clone());
+            let name = request.uri().path().trim_start_matches('/').to_owned();
+            tauri::async_runtime::spawn_blocking(move || {
+                use tauri::http::{header, Response};
+                let response = match state.and_then(|s| s.thumbnail(&name)) {
+                    Some(bytes) => Response::builder()
+                        .header(header::CONTENT_TYPE, "image/jpeg")
+                        .header(header::CACHE_CONTROL, "max-age=31536000, immutable")
+                        .body(bytes),
+                    None => Response::builder().status(404).body(Vec::new()),
+                };
+                responder.respond(response.unwrap());
+            });
+        })
         .setup(|app| {
             let data = app.path().app_data_dir()?;
             let cache = app.path().app_cache_dir()?;

@@ -1,5 +1,5 @@
 import { expect, test, vi } from "vitest";
-import { ImageQueue, type Lane } from "./images";
+import { ImageQueue, thumbnailPx, type Lane } from "./images";
 import type { MediaFile } from "./types";
 function file(path: string): MediaFile {
   return { path, modified_nanos: "1", file_size: 10 } as MediaFile;
@@ -30,6 +30,7 @@ test("a cancelled request is not reused when the same photo is selected again", 
   const { queue, calls, cancel } = harness();
   const first = queue.request(file("a"), 2400, "preview");
   first.release();
+  await flush();
   expect(cancel).toHaveBeenCalledOnce();
   const next = queue.request(file("a"), 2400, "preview");
   expect(calls).toHaveLength(2);
@@ -52,4 +53,21 @@ test("multiple consumers share decoding and a released queued photo never decode
   await flush();
   expect(calls).toHaveLength(1);
   expect(await queue.request(file("a"), 2400, "preview").promise).toBe("data");
+});
+test("re-requesting a released photo in the same tick keeps the running decode", async () => {
+  const { queue, calls, cancel } = harness();
+  const prefetch = queue.request(file("next"), 2400, "prefetch");
+  prefetch.release();
+  const current = queue.request(file("next"), 2400, "preview");
+  await flush();
+  expect(cancel).not.toHaveBeenCalled();
+  expect(calls).toHaveLength(1);
+  calls[0].resolve("data");
+  expect(await current.promise).toBe("data");
+});
+test("thumbnail sizes snap to a few cached buckets", () => {
+  expect(thumbnailPx(130, 1)).toBe(256);
+  expect(thumbnailPx(200, 2)).toBe(512);
+  expect(thumbnailPx(260, 2)).toBe(768);
+  expect(thumbnailPx(500, 2)).toBe(768);
 });
